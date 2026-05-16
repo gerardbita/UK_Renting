@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>UK Renting</title>
+    <meta
+      name="description"
+      content="A personal rental search dashboard with Rightmove listings, commute time, cycling time, and map links."
+    />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIINfQarYnqZifPqC1XSPf5e7xDgScm2zhg="
+      crossorigin=""
+    />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <nav class="nav" aria-label="Primary">
+        <a class="brand" href="./">UK Renting</a>
+        <div class="nav-actions">
+          <a href="https://github.com/gerardbita/UK_Renting" rel="noreferrer">GitHub</a>
+          <a class="button button-dark" href="#listings">View Listings</a>
+        </div>
+      </nav>
+      <section class="hero">
+        <div>
+          <h1>Rental shortlist with commute reality built in.</h1>
+          <p>
+            Rightmove listings enriched with coordinates, public transport estimates,
+            cycling estimates, price filters, and direct map links.
+          </p>
+        </div>
+        <div class="hero-panel" aria-label="Dashboard summary">
+          <div>
+            <span class="metric-label">Active Listings</span>
+            <strong id="activeCount">-</strong>
+          </div>
+          <div>
+            <span class="metric-label">Median Transit</span>
+            <strong id="medianTransit">-</strong>
+          </div>
+          <div>
+            <span class="metric-label">Median Cycle</span>
+            <strong id="medianCycle">-</strong>
+          </div>
+        </div>
+      </section>
+    </header>
+
+    <main>
+      <section class="summary-grid" aria-label="Search summary">
+        <article>
+          <span>Target</span>
+          <strong id="targetName">-</strong>
+          <small id="targetCoords">-</small>
+        </article>
+        <article>
+          <span>Route Profile</span>
+          <strong id="routeProfile">-</strong>
+          <small>Routes are cached unless refreshed locally.</small>
+        </article>
+        <article>
+          <span>Last Export</span>
+          <strong id="generatedAt">-</strong>
+          <small>Static data generated from the local SQLite database.</small>
+        </article>
+      </section>
+
+      <section class="controls" aria-label="Listing filters">
+        <label>
+          Search
+          <input id="searchInput" type="search" placeholder="Address, agent, or area" />
+        </label>
+        <label>
+          Max Rent
+          <input id="maxRent" type="number" min="0" step="50" placeholder="2250" />
+        </label>
+        <label>
+          Max Transit
+          <input id="maxTransit" type="number" min="0" step="5" placeholder="45" />
+        </label>
+        <label>
+          Bedrooms
+          <select id="bedroomsFilter">
+            <option value="">Any bedrooms</option>
+            <option value="1">1 bed</option>
+            <option value="2">2 beds</option>
+            <option value="3">3+ beds</option>
+          </select>
+        </label>
+        <label>
+          Garden
+          <select id="gardenFilter">
+            <option value="">Any</option>
+            <option value="yes">Garden / terrace only</option>
+          </select>
+        </label>
+        <label>
+          Parking
+          <select id="parkingFilter">
+            <option value="">Any</option>
+            <option value="yes">Parking only</option>
+          </select>
+        </label>
+        <label>
+          Sort
+          <select id="sortSelect">
+            <option value="transit">Transit time</option>
+            <option value="cycling">Cycling time</option>
+            <option value="price">Lowest rent</option>
+            <option value="newest">Recently seen</option>
+          </select>
+        </label>
+      </section>
+
+      <section class="map-section" aria-label="Listings map">
+        <div class="section-heading">
+          <h2>Map</h2>
+          <p id="mapCount">Loading map...</p>
+        </div>
+        <div id="map" class="map"></div>
+      </section>
+
+      <section id="listings" class="listings-section">
+        <div class="section-heading">
+          <h2>Listings</h2>
+          <p id="resultCount">Loading listings...</p>
+        </div>
+        <div id="listingsGrid" class="listings-grid" aria-live="polite"></div>
+        <p id="emptyState" class="empty-state" hidden>No listings match these filters.</p>
+      </section>
+    </main>
+
+    <footer>
+      Built from a personal RentWatch export. Always verify availability and route
+      details on Rightmove, TfL, and maps before making decisions.
+    </footer>
+
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+    <script src="app.js"></script>
+  </body>
+</html>

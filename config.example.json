@@ -1,0 +1,48 @@
+{
+  "database": "rentwatch.sqlite3",
+  "polling": {
+    "delay_min_seconds": 1800,
+    "delay_max_seconds": 3600,
+    "page_delay_seconds": 1.0
+  },
+  "http": {
+    "timeout_seconds": 20,
+    "user_agent": "RentWatch/0.1 personal property monitor (low-frequency; contact: local-user)"
+  },
+  "notifications": {
+    "telegram": {
+      "enabled": false,
+      "bot_token": "",
+      "chat_id": ""
+    }
+  },
+  "routing": {
+    "enabled": true,
+    "target_name": "London target",
+    "target_latitude": 51.5209823,
+    "target_longitude": -0.1770073,
+    "public_transport": true,
+    "cycling": true,
+    "tfl_modes": "tube,bus,overground,elizabeth-line,dlr,national-rail",
+    "request_delay_seconds": 0.2,
+    "cache_hours": null,
+    "departure_day": "wednesday",
+    "departure_time": "13:00"
+  },
+  "searches": [
+    {
+      "name": "Example W2 garden unfurnished",
+      "url": "https://www.rightmove.co.uk/property-to-rent/find.html?searchLocation=W2+1SJ&useLocationIdentifier=true&locationIdentifier=POSTCODE%5E918640&rent=To+rent&radius=5.0&maxPrice=2250&index=0&sortType=6&channel=RENT&transactionType=LETTING&displayLocationIdentifier=undefined&propertyTypes=detached%2Csemi-detached%2Cterraced%2Cflat%2Cbungalow&minBedrooms=1&minPrice=1000&dontShow=houseShare%2Cretirement%2Cstudent&mustHave=garden&furnishTypes=unfurnished%2CpartFurnished",
+      "include_keywords": [],
+      "exclude_keywords": [
+        "student",
+        "short let"
+      ],
+      "min_price_pcm": 1000,
+      "max_price_pcm": 2250,
+      "notify_new": true,
+      "notify_price_changes": true,
+      "notify_removed": false
+    }
+  ]
+}

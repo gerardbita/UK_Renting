@@ -352,12 +352,16 @@ def cmd_routes(args: argparse.Namespace) -> int:
     )
     try:
         listings = []
+        synced = 0
         for row in store.iter_listings():
             if not args.include_removed and row["status"] != "active":
                 continue
             listing = listing_from_row(row)
             if listing.latitude is None or listing.longitude is None:
                 continue
+            if sync_listing_route_targets(listing, config):
+                store.update_listing_routes(listing)
+                synced += 1
             if not args.refresh_routes and listing_has_complete_targets(
                 listing, config
             ):
@@ -366,6 +370,8 @@ def cmd_routes(args: argparse.Namespace) -> int:
             listings.append(listing)
 
         if not listings:
+            if synced:
+                print(f"Synced route target labels for {synced} listing(s).")
             print("No listings need route backfill.")
             return 0
 
@@ -383,6 +389,8 @@ def cmd_routes(args: argparse.Namespace) -> int:
             if listing.route_updated_at:
                 store.update_listing_routes(listing)
                 saved += 1
+        if synced:
+            print(f"Synced route target labels for {synced} listing(s).")
         print(f"Saved route data for {saved} listing(s).")
         return 0
     finally:
@@ -624,6 +632,50 @@ def listing_has_complete_targets(listing: Listing, config: AppConfig) -> bool:
         if config.routing.cycling and match.get("cycling_minutes") is None:
             return False
     return True
+
+
+def sync_listing_route_targets(listing: Listing, config: AppConfig) -> bool:
+    if not listing.route_targets:
+        return False
+
+    normalized = []
+    for target in config.routing.targets:
+        match = find_route_target(
+            listing.route_targets,
+            target.latitude,
+            target.longitude,
+        )
+        if match is None:
+            return False
+        normalized.append(
+            {
+                "name": target.name,
+                "latitude": target.latitude,
+                "longitude": target.longitude,
+                "transit_minutes": match.get("transit_minutes"),
+                "transit_distance_km": match.get("transit_distance_km"),
+                "cycling_minutes": match.get("cycling_minutes"),
+                "cycling_distance_km": match.get("cycling_distance_km"),
+            }
+        )
+
+    if listing.route_targets == normalized:
+        return False
+    listing.route_targets = normalized
+    return True
+
+
+def find_route_target(
+    route_targets: list[dict[str, object]], latitude: float, longitude: float
+) -> dict[str, object] | None:
+    return next(
+        (
+            item
+            for item in route_targets
+            if route_target_matches(item, latitude, longitude)
+        ),
+        None,
+    )
 
 
 def route_target_matches(

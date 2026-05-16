@@ -17,7 +17,7 @@ from .config import (
     sample_config,
     save_config,
 )
-from .db import Store
+from .db import Store, listing_from_row
 from .models import Listing, ListingEvent
 from .notifications import TelegramNotifier, format_event_message
 from .rightmove_location import LocationLookupError, lookup_rightmove_locations
@@ -131,6 +131,27 @@ def build_parser() -> argparse.ArgumentParser:
         help="Ignore cached routes and calculate travel times again.",
     )
     run_parser.set_defaults(func=cmd_run)
+
+    routes_parser = subparsers.add_parser(
+        "routes",
+        help="Backfill routes for listings already saved in the database.",
+    )
+    routes_parser.add_argument(
+        "--route-limit",
+        type=int,
+        help="Limit route calculations. Useful for testing before a full backfill.",
+    )
+    routes_parser.add_argument(
+        "--refresh-routes",
+        action="store_true",
+        help="Ignore cached routes and calculate travel times again.",
+    )
+    routes_parser.add_argument(
+        "--include-removed",
+        action="store_true",
+        help="Also calculate routes for removed listings.",
+    )
+    routes_parser.set_defaults(func=cmd_routes)
 
     export_parser = subparsers.add_parser("export", help="Export known listings as CSV.")
     export_parser.add_argument("--output", type=Path, help="Write CSV to this path.")
@@ -315,6 +336,59 @@ def cmd_run(args: argparse.Namespace) -> int:
         store.close()
 
 
+def cmd_routes(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    if not config.routing.enabled:
+        print("Routing is disabled in config.json.")
+        return 2
+    if not config.routing.targets:
+        print("Routing is enabled but no route targets are configured.", file=sys.stderr)
+        return 2
+
+    store = Store(config.resolve_database_path(args.config))
+    routing_client = TflRoutingClient(
+        timeout_seconds=config.http.timeout_seconds,
+        user_agent=config.http.user_agent,
+    )
+    try:
+        listings = []
+        for row in store.iter_listings():
+            if not args.include_removed and row["status"] != "active":
+                continue
+            listing = listing_from_row(row)
+            if listing.latitude is None or listing.longitude is None:
+                continue
+            if not args.refresh_routes and listing_has_complete_targets(
+                listing, config
+            ):
+                continue
+            listing.route_updated_at = ""
+            listings.append(listing)
+
+        if not listings:
+            print("No listings need route backfill.")
+            return 0
+
+        enrich_listings_with_routes(
+            config,
+            store,
+            listings,
+            routing_client=routing_client,
+            route_limit=args.route_limit,
+            refresh_routes=args.refresh_routes,
+        )
+
+        saved = 0
+        for listing in listings:
+            if listing.route_updated_at:
+                store.update_listing_routes(listing)
+                saved += 1
+        print(f"Saved route data for {saved} listing(s).")
+        return 0
+    finally:
+        store.close()
+
+
 def cmd_export(args: argparse.Namespace) -> int:
     config = load_config(args.config)
     store = Store(config.resolve_database_path(args.config))
@@ -471,8 +545,6 @@ def enrich_listings_with_routes(
                 "cycling_minutes": None,
                 "cycling_distance_km": None,
             }
-            target_profile = f"{cache_profile}-{target.latitude:.5f}-{target.longitude:.5f}"
-
             if routing.public_transport:
                 metrics = get_or_fetch_route(
                     store,
@@ -483,7 +555,7 @@ def enrich_listings_with_routes(
                     destination_longitude=target.longitude,
                     tfl_modes=routing.tfl_modes,
                     cache_hours=routing.cache_hours,
-                    cache_profile=target_profile,
+                    cache_profile=cache_profile,
                     route_date=route_date,
                     route_time=route_time,
                     refresh_routes=refresh_routes,
@@ -506,7 +578,7 @@ def enrich_listings_with_routes(
                     destination_longitude=target.longitude,
                     tfl_modes=routing.tfl_modes,
                     cache_hours=routing.cache_hours,
-                    cache_profile=target_profile,
+                    cache_profile=cache_profile,
                     route_date=route_date,
                     route_time=route_time,
                     refresh_routes=refresh_routes,
@@ -530,6 +602,42 @@ def enrich_listings_with_routes(
 
         if routing.request_delay_seconds > 0:
             time.sleep(routing.request_delay_seconds)
+
+
+def listing_has_complete_targets(listing: Listing, config: AppConfig) -> bool:
+    if not listing.route_targets:
+        return False
+
+    for target in config.routing.targets:
+        match = next(
+            (
+                item
+                for item in listing.route_targets
+                if route_target_matches(item, target.latitude, target.longitude)
+            ),
+            None,
+        )
+        if match is None:
+            return False
+        if config.routing.public_transport and match.get("transit_minutes") is None:
+            return False
+        if config.routing.cycling and match.get("cycling_minutes") is None:
+            return False
+    return True
+
+
+def route_target_matches(
+    item: dict[str, object], latitude: float, longitude: float
+) -> bool:
+    try:
+        item_latitude = float(item.get("latitude"))
+        item_longitude = float(item.get("longitude"))
+    except (TypeError, ValueError):
+        return False
+    return (
+        abs(item_latitude - latitude) < 0.00001
+        and abs(item_longitude - longitude) < 0.00001
+    )
 
 
 def get_or_fetch_route(

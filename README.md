@@ -98,6 +98,15 @@ npm run dev
 For GitHub Pages, the workflow builds the app with `/UK_Renting/` as the base
 path and deploys `web/dist`.
 
+If you already have listings in `rentwatch.sqlite3` and only need to fill new
+route targets, use the database-only route backfill. This avoids fetching
+Rightmove before calculating TfL routes:
+
+```bash
+python3 -m rentwatch routes
+python3 scripts/export_site_data.py
+```
+
 Edit `config.json` to add Telegram credentials:
 
 ```json

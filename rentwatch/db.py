@@ -245,6 +245,34 @@ class Store:
             """
         )
 
+    def update_listing_routes(self, listing: Listing) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE listings
+                SET transit_minutes = ?,
+                    transit_distance_km = ?,
+                    cycling_minutes = ?,
+                    cycling_distance_km = ?,
+                    route_target_latitude = ?,
+                    route_target_longitude = ?,
+                    route_targets_json = ?,
+                    route_updated_at = ?
+                WHERE listing_key = ?
+                """,
+                (
+                    listing.transit_minutes,
+                    listing.transit_distance_km,
+                    listing.cycling_minutes,
+                    listing.cycling_distance_km,
+                    listing.route_target_latitude,
+                    listing.route_target_longitude,
+                    json.dumps(listing.route_targets or [], sort_keys=True),
+                    listing.route_updated_at,
+                    listing.listing_key,
+                ),
+            )
+
     def list_searches_summary(self) -> list[sqlite3.Row]:
         return list(
             self.connection.execute(

@@ -18,9 +18,6 @@
   },
   "routing": {
     "enabled": true,
-    "target_name": "London target",
-    "target_latitude": 51.5209823,
-    "target_longitude": -0.1770073,
     "public_transport": true,
     "cycling": true,
     "tfl_modes": "tube,bus,overground,elizabeth-line,dlr,national-rail",
@@ -35,7 +32,7 @@
         "longitude": -0.1770073
       },
       {
-        "name": "Second target",
+        "name": "Hammersmith target",
         "latitude": 51.4928449,
         "longitude": -0.2198001
       }

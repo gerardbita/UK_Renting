@@ -53,9 +53,13 @@ specific target. To calculate routes to more than one place, add `targets`:
 {
   "routing": {
     "enabled": true,
-    "target_name": "London target",
-    "target_latitude": 51.5209823,
-    "target_longitude": -0.1770073,
+    "public_transport": true,
+    "cycling": true,
+    "tfl_modes": "tube,bus,overground,elizabeth-line,dlr,national-rail",
+    "request_delay_seconds": 0.2,
+    "cache_hours": null,
+    "departure_day": "wednesday",
+    "departure_time": "08:00",
     "targets": [
       {
         "name": "Paddington target",
@@ -63,16 +67,11 @@ specific target. To calculate routes to more than one place, add `targets`:
         "longitude": -0.1770073
       },
       {
-        "name": "Second target",
+        "name": "Hammersmith target",
         "latitude": 51.4928449,
         "longitude": -0.2198001
       }
-    ],
-    "public_transport": true,
-    "cycling": true,
-    "cache_hours": null,
-    "departure_day": "wednesday",
-    "departure_time": "13:00"
+    ]
   }
 }
 ```

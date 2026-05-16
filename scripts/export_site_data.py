@@ -126,15 +126,21 @@ def ensure_site_columns(con: sqlite3.Connection) -> None:
 
 
 def safe_routing_config(routing: dict) -> dict:
-    return {
+    data = {
         "enabled": bool(routing.get("enabled", False)),
-        "target_name": routing.get("target_name") or "Target",
-        "target_latitude": routing.get("target_latitude"),
-        "target_longitude": routing.get("target_longitude"),
         "departure_day": routing.get("departure_day"),
         "departure_time": routing.get("departure_time"),
         "targets": routing.get("targets", []),
     }
+    if not data["targets"]:
+        data.update(
+            {
+                "target_name": routing.get("target_name") or "Target",
+                "target_latitude": routing.get("target_latitude"),
+                "target_longitude": routing.get("target_longitude"),
+            }
+        )
+    return data
 
 
 def has_any(row: sqlite3.Row, needles: list[str]) -> bool:

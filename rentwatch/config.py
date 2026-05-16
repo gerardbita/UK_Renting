@@ -118,6 +118,8 @@ class RouteTargetConfig:
 @dataclass(slots=True)
 class RoutingConfig:
     enabled: bool = False
+    # Legacy single-target fields are still accepted when reading old configs.
+    # New configs should use `targets`.
     target_name: str = ""
     target_latitude: float | None = None
     target_longitude: float | None = None
@@ -165,11 +167,8 @@ class RoutingConfig:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data = {
             "enabled": self.enabled,
-            "target_name": self.target_name,
-            "target_latitude": self.target_latitude,
-            "target_longitude": self.target_longitude,
             "public_transport": self.public_transport,
             "cycling": self.cycling,
             "tfl_modes": self.tfl_modes,
@@ -179,6 +178,15 @@ class RoutingConfig:
             "departure_time": self.departure_time,
             "targets": [target.to_dict() for target in self.targets],
         }
+        if not self.targets and self.target_latitude is not None and self.target_longitude is not None:
+            data.update(
+                {
+                    "target_name": self.target_name,
+                    "target_latitude": self.target_latitude,
+                    "target_longitude": self.target_longitude,
+                }
+            )
+        return data
 
 
 @dataclass(slots=True)
@@ -294,9 +302,6 @@ def sample_config() -> AppConfig:
     return AppConfig(
         routing=RoutingConfig(
             enabled=True,
-            target_name="London target",
-            target_latitude=51.5209823,
-            target_longitude=-0.1770073,
             targets=[
                 RouteTargetConfig(
                     name="Paddington target",
@@ -304,7 +309,7 @@ def sample_config() -> AppConfig:
                     longitude=-0.1770073,
                 ),
                 RouteTargetConfig(
-                    name="Second target",
+                    name="Hammersmith target",
                     latitude=51.4928449,
                     longitude=-0.2198001,
                 ),

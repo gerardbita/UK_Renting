@@ -1,70 +1,153 @@
 import { Score } from "./SummaryPanel.jsx";
 
-export default function ListingResults({ listings, targets, selectedIds, onToggleSelected }) {
+export default function ListingResults({ listings, targets, selectedIds, onToggleSelected, updatedAt }) {
+  function exportCsv() {
+    const header = [
+      "rank",
+      "address",
+      "price_pcm",
+      "bedrooms",
+      "score",
+      ...targets.flatMap((target) => [
+        `${target.name} transit minutes`,
+        `${target.name} transit km`,
+        `${target.name} cycle minutes`,
+        `${target.name} cycle km`,
+      ]),
+      "url",
+    ];
+    const rows = listings.slice(0, 500).map((listing, index) => [
+      index + 1,
+      listing.address || listing.title || "",
+      listing.price_pcm || "",
+      listing.bedrooms || "",
+      listing.score,
+      ...listing.routes.flatMap((route) => [
+        route.transit_minutes ?? "",
+        route.transit_distance_km ?? "",
+        route.cycling_minutes ?? "",
+        route.cycling_distance_km ?? "",
+      ]),
+      listing.url || "",
+    ]);
+    const csv = [header, ...rows]
+      .map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(","))
+      .join("\n");
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "uk-renting-results.csv";
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
   return (
     <section className="results-panel" aria-label="Ranked listings">
       <div className="results-heading">
         <div>
-          <h2>Ranked homes</h2>
-          <p>Balanced by rent, amenities, and route time to both destinations.</p>
+          <h2>{listings.length.toLocaleString("en-GB")} results</h2>
+          <p>Updated {formatDateTime(updatedAt)}</p>
         </div>
-        <span>{listings.length.toLocaleString("en-GB")} results</span>
+        <div className="results-actions">
+          <button type="button">Compare ({selectedIds.length})</button>
+          <button type="button" onClick={exportCsv}>Export CSV</button>
+        </div>
       </div>
 
-      <div className="listing-table">
-        {listings.slice(0, 120).map((listing, index) => (
+      <div className="listing-table" style={{ "--target-count": targets.length }}>
+        <div className="listing-head">
+          <span>#</span>
+          <span>Property</span>
+          <span>Rent</span>
+          <span>Beds</span>
+          <span>Garden</span>
+          <span>Parking</span>
+          {targets.map((target, index) => (
+            <span className="target-head" key={target.name}>
+              <strong>{target.name} (T{index + 1})</strong>
+              <small><b>Transit</b><b>Cycle</b></small>
+            </span>
+          ))}
+          <span className="score-head">
+            Balanced Score
+            <small>0-100</small>
+          </span>
+          <span>Actions</span>
+        </div>
+        {listings.slice(0, 50).map((listing, index) => (
           <article className="listing-row" key={listing.id}>
             <div className="rank-cell">
+              <input
+                type="checkbox"
+                checked={selectedIds.includes(listing.id)}
+                onChange={() => onToggleSelected(listing.id)}
+                aria-label={`Compare ${listing.address || listing.title || "listing"}`}
+              />
               <span>{index + 1}</span>
-              <Score value={listing.score} />
             </div>
 
             <div className="listing-main">
+              <div className="listing-thumb" aria-hidden="true">{initialsFor(listing)}</div>
               <h3>{listing.address || listing.title || "Untitled listing"}</h3>
               <p>
-                {listing.price_text || "Price unavailable"}
-                {listing.bedrooms ? ` · ${listing.bedrooms} bed` : ""}
-                {listing.has_garden ? " · Garden/terrace" : ""}
-                {listing.has_parking ? " · Parking" : ""}
-                {listing.agent ? ` · ${listing.agent}` : ""}
+                {listing.agent || listing.title || "Rightmove listing"}
               </p>
-              <div className="action-row">
-                <a href={listing.url} target="_blank" rel="noreferrer">Rightmove</a>
-                {targets.map((target, targetIndex) => (
-                  <a
-                    key={`${listing.id}:${target.name}:map`}
-                    href={directionsUrl(listing, target, "transit")}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Map to {targetIndex + 1}
-                  </a>
-                ))}
-                <button type="button" onClick={() => onToggleSelected(listing.id)}>
-                  {selectedIds.includes(listing.id) ? "Remove compare" : "Compare"}
-                </button>
-              </div>
             </div>
 
-            <div className="route-columns">
-              {listing.routes.map((route, routeIndex) => (
-                <RouteColumn route={route} index={routeIndex} key={`${listing.id}:${route.name}`} />
+            <strong className="rent-cell">{listing.price_text || "-"}</strong>
+            <span className="simple-cell">{listing.bedrooms || "-"}</span>
+            <span className="bool-cell">{listing.has_garden ? "✓" : "–"}</span>
+            <span className="bool-cell">{listing.has_parking ? "✓" : "–"}</span>
+
+            {listing.routes.map((route) => (
+              <RouteColumn route={route} key={`${listing.id}:${route.name}`} />
+            ))}
+
+            <div className="score-cell">
+              <Score value={listing.score} />
+              <i style={{ "--score": `${listing.score}%` }} />
+            </div>
+
+            <div className="action-row">
+              <a href={listing.url} target="_blank" rel="noreferrer">Rightmove</a>
+              {targets.map((target, targetIndex) => (
+                <a
+                  key={`${listing.id}:${target.name}:map`}
+                  href={directionsUrl(listing, target, "transit")}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  Map {targetIndex + 1}
+                </a>
               ))}
+              <button type="button" onClick={() => onToggleSelected(listing.id)}>
+                Compare
+              </button>
             </div>
           </article>
         ))}
+        <footer className="results-footer">
+          <span>Showing 1-50 of {listings.length.toLocaleString("en-GB")} results</span>
+          <div aria-label="Pagination preview">
+            <button type="button" className="is-active">1</button>
+            <button type="button">2</button>
+            <button type="button">3</button>
+            <span>...</span>
+            <button type="button">{Math.max(1, Math.ceil(listings.length / 50))}</button>
+          </div>
+          <label>
+            Rows per page
+            <span className="rows-select">50</span>
+          </label>
+        </footer>
       </div>
     </section>
   );
 }
 
-function RouteColumn({ route, index }) {
+function RouteColumn({ route }) {
   return (
     <div className="route-column">
-      <h4>
-        <span>{index + 1}</span>
-        {route.name}
-      </h4>
       <div className="route-values">
         <Metric label="Transit" minutes={route.transit_minutes} distance={route.transit_distance_km} />
         <Metric label="Cycle" minutes={route.cycling_minutes} distance={route.cycling_distance_km} />
@@ -95,4 +178,23 @@ function formatMinutes(value) {
 
 function formatDistance(value) {
   return value === null || value === undefined ? "not calculated" : `${Number(value).toFixed(2)} km`;
+}
+
+function formatDateTime(value) {
+  if (!value) return "unknown";
+  return new Intl.DateTimeFormat("en-GB", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value));
+}
+
+function initialsFor(listing) {
+  const text = listing.address || listing.title || "UK";
+  return text
+    .split(/[,\s]+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0])
+    .join("")
+    .toUpperCase();
 }

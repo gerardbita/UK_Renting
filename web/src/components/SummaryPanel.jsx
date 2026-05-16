@@ -3,6 +3,7 @@ import { median, minDefined } from "../lib/scoring.js";
 export default function SummaryPanel({ listings, allListings, targets }) {
   const active = listings.filter((listing) => listing.status !== "removed");
   const best = [...listings].sort((a, b) => b.score - a.score).slice(0, 4);
+  const bestScore = best[0]?.score ?? null;
   const medianRent = median(active.map((listing) => listing.price_pcm));
   const targetMedians = targets.map((target, index) => ({
     name: target.name,
@@ -29,6 +30,26 @@ export default function SummaryPanel({ listings, allListings, targets }) {
             <strong>{target.name}</strong>
             <span>Transit {formatMinutes(target.transit)}</span>
             <span>Cycle {formatMinutes(target.cycle)}</span>
+          </div>
+        ))}
+      </section>
+
+      <section className="best-score-panel">
+        <span>Best balanced score</span>
+        <strong>{bestScore ?? "-"}{bestScore !== null ? " /100" : ""}</strong>
+        <p>Achievable by {best.filter((listing) => listing.score === bestScore).length || 0} top listing(s)</p>
+      </section>
+
+      <section className="target-list">
+        <div className="target-list-heading">
+          <h2>Targets</h2>
+          <span>Edit targets</span>
+        </div>
+        {targets.map((target, index) => (
+          <div className="target-row" key={target.name}>
+            <strong>{index + 1}</strong>
+            <span>{target.name}</span>
+            <small>T{index + 1}</small>
           </div>
         ))}
       </section>

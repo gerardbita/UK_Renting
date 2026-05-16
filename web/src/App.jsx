@@ -87,13 +87,20 @@ export default function App() {
   return (
     <main className="app-shell">
       <header className="topbar">
-        <div>
+        <div className="brand-block">
+          <span className="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" role="img">
+              <path d="M3 11.4 12 3l9 8.4" />
+              <path d="M5.5 10.5V21h13V10.5" />
+              <path d="M9 21v-6h6v6" />
+            </svg>
+          </span>
           <h1>UK Renting</h1>
-          <p>
-            {filteredListings.length.toLocaleString("en-GB")} of{" "}
-            {listings.length.toLocaleString("en-GB")} listings · updated{" "}
-            {formatDateTime(payload?.generated_at)}
-          </p>
+        </div>
+        <div className="update-block">
+          <span className="clock-mark" aria-hidden="true">◷</span>
+          <span>Last updated: {formatDateTime(payload?.generated_at)}</span>
+          <strong>Live</strong>
         </div>
         <div className="target-strip" aria-label="Route targets">
           {targets.map((target, index) => (
@@ -103,10 +110,23 @@ export default function App() {
             </span>
           ))}
         </div>
+        <a className="deploy-status" href="https://github.com/gerardbita/UK_Renting" target="_blank" rel="noreferrer">
+          GitHub Pages <span /> Deployed
+        </a>
       </header>
 
       <section className="dashboard-grid">
-        <FilterRail filters={filters} setFilters={setFilters} />
+        <FilterRail
+          filters={filters}
+          setFilters={setFilters}
+          onReset={() => setFilters(initialFilters)}
+          onApply={() => {
+            document.querySelector(".results-panel")?.scrollIntoView({
+              behavior: "smooth",
+              block: "start",
+            });
+          }}
+        />
 
         <section className="main-stage" aria-label="Map and listing results">
           <DashboardMap listings={filteredListings} targets={targets} />
@@ -115,6 +135,7 @@ export default function App() {
             targets={targets}
             selectedIds={selectedIds}
             onToggleSelected={toggleSelected}
+            updatedAt={payload?.generated_at}
           />
         </section>
 

@@ -10,6 +10,8 @@ export default function DashboardMap({ listings, targets }) {
     const map = L.map("rental-map", {
       zoomControl: false,
       scrollWheelZoom: false,
+      zoomSnap: 0.25,
+      zoomDelta: 0.5,
     }).setView([51.5074, -0.1278], 11);
     L.control.zoom({ position: "bottomright" }).addTo(map);
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -27,6 +29,8 @@ export default function DashboardMap({ listings, targets }) {
 
     layer.clearLayers();
     const bounds = [];
+    const focusBounds = [];
+    const focusCenter = targetCenter(targets);
 
     for (const target of targets) {
       const marker = L.marker([target.latitude, target.longitude], {
@@ -39,6 +43,19 @@ export default function DashboardMap({ listings, targets }) {
       }).addTo(layer);
       marker.bindPopup(`<strong>${escapeHtml(target.name)}</strong><br>${target.latitude.toFixed(5)}, ${target.longitude.toFixed(5)}`);
       bounds.push([target.latitude, target.longitude]);
+      focusBounds.push([target.latitude, target.longitude]);
+    }
+
+    if (targets.length >= 2) {
+      L.polyline(
+        targets.map((target) => [target.latitude, target.longitude]),
+        {
+          color: "#1976d2",
+          dashArray: "8 8",
+          weight: 3,
+          opacity: 0.75,
+        },
+      ).addTo(layer);
     }
 
     for (const listing of listings.slice(0, 600)) {
@@ -52,9 +69,18 @@ export default function DashboardMap({ listings, targets }) {
       }).addTo(layer);
       marker.bindPopup(renderPopup(listing));
       bounds.push([Number(listing.latitude), Number(listing.longitude)]);
+      if (focusCenter && distanceKm(focusCenter, [Number(listing.latitude), Number(listing.longitude)]) <= 14.5) {
+        focusBounds.push([Number(listing.latitude), Number(listing.longitude)]);
+      }
     }
 
-    if (bounds.length) map.fitBounds(bounds, { padding: [28, 28], maxZoom: 13 });
+    if (focusCenter) {
+      map.setView(focusCenter, map.getSize().x < 700 ? 10.25 : 11.25);
+    } else if (focusBounds.length > targets.length) {
+      map.fitBounds(focusBounds, { padding: [28, 28], maxZoom: 12 });
+    } else if (bounds.length) {
+      map.fitBounds(bounds, { padding: [28, 28], maxZoom: 12 });
+    }
   }, [listings, targets]);
 
   return (
@@ -67,11 +93,16 @@ export default function DashboardMap({ listings, targets }) {
         <span>{Math.min(listings.length, 600).toLocaleString("en-GB")} pins</span>
       </div>
       <div id="rental-map" />
+      <div className="map-legend">
+        <strong>Balanced Score</strong>
+        <div><span>High</span><i /><span>Low</span></div>
+        <small>Scores combine rent and route time to both targets.</small>
+      </div>
     </section>
   );
 }
 
-export function scoreColor(score) {
+function scoreColor(score) {
   if (score >= 78) return "#0d7a49";
   if (score >= 62) return "#5d8f2f";
   if (score >= 45) return "#c58a1b";
@@ -82,6 +113,24 @@ function scoreRadius(score) {
   if (score >= 80) return 8;
   if (score >= 60) return 7;
   return 6;
+}
+
+function targetCenter(targets) {
+  if (!targets.length) return null;
+  const total = targets.reduce(
+    (accumulator, target) => [
+      accumulator[0] + Number(target.latitude),
+      accumulator[1] + Number(target.longitude),
+    ],
+    [0, 0],
+  );
+  return [total[0] / targets.length, total[1] / targets.length];
+}
+
+function distanceKm([latA, lonA], [latB, lonB]) {
+  const latKm = (latA - latB) * 111;
+  const lonKm = (lonA - lonB) * 69 * Math.cos(((latA + latB) / 2) * (Math.PI / 180));
+  return Math.sqrt(latKm * latKm + lonKm * lonKm);
 }
 
 function renderPopup(listing) {

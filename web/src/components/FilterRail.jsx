@@ -1,13 +1,31 @@
-export default function FilterRail({ filters, setFilters }) {
+import { useState } from "react";
+
+export default function FilterRail({ filters, setFilters, onReset, onApply }) {
+  const [saved, setSaved] = useState(false);
+
   function update(key, value) {
     setFilters((current) => ({ ...current, [key]: value }));
+    setSaved(false);
+  }
+
+  function saveSearch() {
+    window.localStorage.setItem("uk-renting-filters", JSON.stringify(filters));
+    setSaved(true);
   }
 
   return (
     <aside className="filter-rail" aria-label="Listing filters">
-      <div>
-        <h2>Search controls</h2>
-        <p>Rank homes by the commute tradeoff across both destinations.</p>
+      <div className="rail-title">
+        <h2>Filters</h2>
+        <button
+          type="button"
+          onClick={() => {
+            setSaved(false);
+            onReset();
+          }}
+        >
+          Reset all
+        </button>
       </div>
 
       <label>
@@ -39,6 +57,20 @@ export default function FilterRail({ filters, setFilters }) {
           />
         </label>
       </div>
+
+      <fieldset className="segmented-field">
+        <legend>Bedrooms</legend>
+        {["", "1", "2", "3"].map((value) => (
+          <button
+            key={value || "studio"}
+            type="button"
+            className={String(filters.minBeds) === value ? "is-active" : ""}
+            onClick={() => update("minBeds", value)}
+          >
+            {value || "Studio"}
+          </button>
+        ))}
+      </fieldset>
 
       <label>
         Sort by
@@ -89,6 +121,11 @@ export default function FilterRail({ filters, setFilters }) {
         <Toggle label="Parking" checked={filters.parkingOnly} onChange={(value) => update("parkingOnly", value)} />
         <Toggle label="Hide missing routes" checked={filters.completeRoutesOnly} onChange={(value) => update("completeRoutesOnly", value)} />
       </div>
+
+      <button className="primary-filter" type="button" onClick={onApply}>Apply filters</button>
+      <button className="secondary-filter" type="button" onClick={saveSearch}>
+        {saved ? "Search saved" : "Save search"}
+      </button>
     </aside>
   );
 }

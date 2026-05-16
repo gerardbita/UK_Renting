@@ -47,7 +47,7 @@ Searches are normally pasted Rightmove result URLs:
 ```
 
 Optional routing can calculate TfL public-transport and cycling time to a
-specific target:
+specific target. To calculate routes to more than one place, add `targets`:
 
 ```json
 {
@@ -56,6 +56,18 @@ specific target:
     "target_name": "London target",
     "target_latitude": 51.5209823,
     "target_longitude": -0.1770073,
+    "targets": [
+      {
+        "name": "Paddington target",
+        "latitude": 51.5209823,
+        "longitude": -0.1770073
+      },
+      {
+        "name": "Second target",
+        "latitude": 51.4928449,
+        "longitude": -0.2198001
+      }
+    ],
     "public_transport": true,
     "cycling": true,
     "cache_hours": null,
@@ -68,6 +80,23 @@ specific target:
 `cache_hours: null` means routes are calculated once and reused. Use
 `python3 -m rentwatch run --once --no-notify --refresh-routes` if you
 intentionally want to recalculate them.
+
+## React dashboard
+
+The GitHub Pages site is a React/Vite dashboard in `web/`. It reads the
+exported JSON from `web/public/data/listings.json`; `scripts/export_site_data.py`
+also writes that file after updating `docs/data/listings.json`.
+
+```bash
+python3 -m rentwatch run --once --no-notify
+python3 scripts/export_site_data.py
+cd web
+npm install
+npm run dev
+```
+
+For GitHub Pages, the workflow builds the app with `/UK_Renting/` as the base
+path and deploys `web/dist`.
 
 Edit `config.json` to add Telegram credentials:
 

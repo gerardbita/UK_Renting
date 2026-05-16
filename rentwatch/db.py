@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS listings (
     cycling_distance_km REAL,
     route_target_latitude REAL,
     route_target_longitude REAL,
+    route_targets_json TEXT,
     route_updated_at TEXT,
     agent TEXT,
     summary TEXT,
@@ -326,9 +327,9 @@ class Store:
                     price_pcm, bedrooms, latitude, longitude, agent, summary,
                     transit_minutes, transit_distance_km, cycling_minutes,
                     cycling_distance_km, route_target_latitude,
-                    route_target_longitude, route_updated_at, title, first_seen_at,
+                    route_target_longitude, route_targets_json, route_updated_at, title, first_seen_at,
                     last_seen_at, last_changed_at, raw_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     listing.listing_key,
@@ -349,6 +350,7 @@ class Store:
                     listing.cycling_distance_km,
                     listing.route_target_latitude,
                     listing.route_target_longitude,
+                    json.dumps(listing.route_targets or [], sort_keys=True),
                     listing.route_updated_at,
                     listing.title,
                     now,
@@ -382,6 +384,7 @@ class Store:
                 cycling_distance_km = ?,
                 route_target_latitude = ?,
                 route_target_longitude = ?,
+                route_targets_json = ?,
                 route_updated_at = ?,
                 title = ?,
                 last_seen_at = ?,
@@ -405,6 +408,7 @@ class Store:
                 route_values["cycling_distance_km"],
                 route_values["route_target_latitude"],
                 route_values["route_target_longitude"],
+                route_values["route_targets_json"],
                 route_values["route_updated_at"],
                 listing.title,
                 now,
@@ -455,6 +459,7 @@ class Store:
             ("cycling_distance_km", "REAL"),
             ("route_target_latitude", "REAL"),
             ("route_target_longitude", "REAL"),
+            ("route_targets_json", "TEXT"),
             ("route_updated_at", "TEXT"),
         ]:
             if column not in existing:
@@ -480,6 +485,7 @@ def listing_from_row(row: sqlite3.Row) -> Listing:
         cycling_distance_km=row["cycling_distance_km"],
         route_target_latitude=row["route_target_latitude"],
         route_target_longitude=row["route_target_longitude"],
+        route_targets=json.loads(row["route_targets_json"] or "[]"),
         route_updated_at=row["route_updated_at"] or "",
         agent=row["agent"] or "",
         summary=row["summary"] or "",
@@ -499,6 +505,7 @@ def route_values_for_update(
             "cycling_distance_km": listing.cycling_distance_km,
             "route_target_latitude": listing.route_target_latitude,
             "route_target_longitude": listing.route_target_longitude,
+            "route_targets_json": json.dumps(listing.route_targets or [], sort_keys=True),
             "route_updated_at": listing.route_updated_at,
         }
 
@@ -509,6 +516,7 @@ def route_values_for_update(
         "cycling_distance_km": current["cycling_distance_km"],
         "route_target_latitude": current["route_target_latitude"],
         "route_target_longitude": current["route_target_longitude"],
+        "route_targets_json": current["route_targets_json"],
         "route_updated_at": current["route_updated_at"],
     }
 

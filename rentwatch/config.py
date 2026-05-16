@@ -94,6 +94,28 @@ class NotificationConfig:
 
 
 @dataclass(slots=True)
+class RouteTargetConfig:
+    name: str
+    latitude: float
+    longitude: float
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "RouteTargetConfig":
+        return cls(
+            name=str(data.get("name") or "Target"),
+            latitude=float(data["latitude"]),
+            longitude=float(data["longitude"]),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "latitude": self.latitude,
+            "longitude": self.longitude,
+        }
+
+
+@dataclass(slots=True)
 class RoutingConfig:
     enabled: bool = False
     target_name: str = ""
@@ -106,15 +128,30 @@ class RoutingConfig:
     cache_hours: float | None = None
     departure_day: str = "wednesday"
     departure_time: str = "13:00"
+    targets: list[RouteTargetConfig] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "RoutingConfig":
         data = data or {}
+        targets = [
+            RouteTargetConfig.from_dict(item)
+            for item in data.get("targets", [])
+        ]
+        target_latitude = _optional_float(data.get("target_latitude"))
+        target_longitude = _optional_float(data.get("target_longitude"))
+        if not targets and target_latitude is not None and target_longitude is not None:
+            targets = [
+                RouteTargetConfig(
+                    name=str(data.get("target_name", "")) or "Target",
+                    latitude=target_latitude,
+                    longitude=target_longitude,
+                )
+            ]
         return cls(
             enabled=bool(data.get("enabled", False)),
             target_name=str(data.get("target_name", "")),
-            target_latitude=_optional_float(data.get("target_latitude")),
-            target_longitude=_optional_float(data.get("target_longitude")),
+            target_latitude=target_latitude,
+            target_longitude=target_longitude,
             public_transport=bool(data.get("public_transport", True)),
             cycling=bool(data.get("cycling", True)),
             tfl_modes=str(
@@ -124,6 +161,7 @@ class RoutingConfig:
             cache_hours=_optional_float(data.get("cache_hours")),
             departure_day=str(data.get("departure_day", "wednesday")),
             departure_time=str(data.get("departure_time", "13:00")),
+            targets=targets,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -139,6 +177,7 @@ class RoutingConfig:
             "cache_hours": self.cache_hours,
             "departure_day": self.departure_day,
             "departure_time": self.departure_time,
+            "targets": [target.to_dict() for target in self.targets],
         }
 
 
@@ -258,6 +297,18 @@ def sample_config() -> AppConfig:
             target_name="London target",
             target_latitude=51.5209823,
             target_longitude=-0.1770073,
+            targets=[
+                RouteTargetConfig(
+                    name="Paddington target",
+                    latitude=51.5209823,
+                    longitude=-0.1770073,
+                ),
+                RouteTargetConfig(
+                    name="Second target",
+                    latitude=51.4928449,
+                    longitude=-0.2198001,
+                ),
+            ],
             public_transport=True,
             cycling=True,
         ),

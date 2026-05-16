@@ -432,7 +432,8 @@ def enrich_listings_with_routes(
     routing = config.routing
     if not routing.enabled:
         return
-    if routing.target_latitude is None or routing.target_longitude is None:
+    targets = routing.targets
+    if not targets:
         print("Routing is enabled but target coordinates are missing.", file=sys.stderr)
         return
     if routing_client is None:
@@ -454,54 +455,77 @@ def enrich_listings_with_routes(
     cache_profile = f"{routing.departure_day.lower()}-{route_time}"
     print(
         f"Calculating routes for {len(candidates)} listing(s) "
-        f"to {routing.target_name or 'target'} "
+        f"to {len(targets)} target(s) "
         f"for {routing.departure_day} {routing.departure_time}..."
     )
     for listing in candidates:
         updated = False
-        if routing.public_transport:
-            metrics = get_or_fetch_route(
-                store,
-                routing_client,
-                listing,
-                mode="public_transport",
-                destination_latitude=routing.target_latitude,
-                destination_longitude=routing.target_longitude,
-                tfl_modes=routing.tfl_modes,
-                cache_hours=routing.cache_hours,
-                cache_profile=cache_profile,
-                route_date=route_date,
-                route_time=route_time,
-                refresh_routes=refresh_routes,
-            )
-            if metrics:
-                listing.transit_minutes = metrics.duration_minutes
-                listing.transit_distance_km = metrics.distance_km
-                updated = True
+        route_targets = []
+        for index, target in enumerate(targets):
+            target_result = {
+                "name": target.name,
+                "latitude": target.latitude,
+                "longitude": target.longitude,
+                "transit_minutes": None,
+                "transit_distance_km": None,
+                "cycling_minutes": None,
+                "cycling_distance_km": None,
+            }
+            target_profile = f"{cache_profile}-{target.latitude:.5f}-{target.longitude:.5f}"
 
-        if routing.cycling:
-            metrics = get_or_fetch_route(
-                store,
-                routing_client,
-                listing,
-                mode="cycling",
-                destination_latitude=routing.target_latitude,
-                destination_longitude=routing.target_longitude,
-                tfl_modes=routing.tfl_modes,
-                cache_hours=routing.cache_hours,
-                cache_profile=cache_profile,
-                route_date=route_date,
-                route_time=route_time,
-                refresh_routes=refresh_routes,
-            )
-            if metrics:
-                listing.cycling_minutes = metrics.duration_minutes
-                listing.cycling_distance_km = metrics.distance_km
-                updated = True
+            if routing.public_transport:
+                metrics = get_or_fetch_route(
+                    store,
+                    routing_client,
+                    listing,
+                    mode="public_transport",
+                    destination_latitude=target.latitude,
+                    destination_longitude=target.longitude,
+                    tfl_modes=routing.tfl_modes,
+                    cache_hours=routing.cache_hours,
+                    cache_profile=target_profile,
+                    route_date=route_date,
+                    route_time=route_time,
+                    refresh_routes=refresh_routes,
+                )
+                if metrics:
+                    target_result["transit_minutes"] = metrics.duration_minutes
+                    target_result["transit_distance_km"] = metrics.distance_km
+                    if index == 0:
+                        listing.transit_minutes = metrics.duration_minutes
+                        listing.transit_distance_km = metrics.distance_km
+                    updated = True
+
+            if routing.cycling:
+                metrics = get_or_fetch_route(
+                    store,
+                    routing_client,
+                    listing,
+                    mode="cycling",
+                    destination_latitude=target.latitude,
+                    destination_longitude=target.longitude,
+                    tfl_modes=routing.tfl_modes,
+                    cache_hours=routing.cache_hours,
+                    cache_profile=target_profile,
+                    route_date=route_date,
+                    route_time=route_time,
+                    refresh_routes=refresh_routes,
+                )
+                if metrics:
+                    target_result["cycling_minutes"] = metrics.duration_minutes
+                    target_result["cycling_distance_km"] = metrics.distance_km
+                    if index == 0:
+                        listing.cycling_minutes = metrics.duration_minutes
+                        listing.cycling_distance_km = metrics.distance_km
+                    updated = True
+
+            route_targets.append(target_result)
 
         if updated:
-            listing.route_target_latitude = routing.target_latitude
-            listing.route_target_longitude = routing.target_longitude
+            first_target = targets[0]
+            listing.route_target_latitude = first_target.latitude
+            listing.route_target_longitude = first_target.longitude
+            listing.route_targets = route_targets
             listing.route_updated_at = utc_now()
 
         if routing.request_delay_seconds > 0:

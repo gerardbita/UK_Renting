@@ -21,6 +21,7 @@ class Listing:
     cycling_distance_km: float | None = None
     route_target_latitude: float | None = None
     route_target_longitude: float | None = None
+    route_targets: list[dict[str, Any]] = field(default_factory=list)
     route_updated_at: str = ""
     agent: str = ""
     summary: str = ""

@@ -27,7 +27,19 @@
     "request_delay_seconds": 0.2,
     "cache_hours": null,
     "departure_day": "wednesday",
-    "departure_time": "13:00"
+    "departure_time": "13:00",
+    "targets": [
+      {
+        "name": "Paddington target",
+        "latitude": 51.5209823,
+        "longitude": -0.1770073
+      },
+      {
+        "name": "Second target",
+        "latitude": 51.4928449,
+        "longitude": -0.2198001
+      }
+    ]
   },
   "searches": [
     {

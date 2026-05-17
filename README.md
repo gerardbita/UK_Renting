@@ -215,6 +215,19 @@ Then run a single check:
 python3 -m rentwatch run --once
 ```
 
+The CLI shows progress while scraping and calculating routes. Scraping displays
+page progress plus collected listings against the portal headline count. Route
+calculation displays listing progress while it works through the route targets.
+
+Limited page checks are read-only by default, so this is safe for testing:
+
+```bash
+python3 -m rentwatch run --once --max-pages 1 --skip-routes --skip-zoopla
+```
+
+Use `--allow-partial-write` only if you intentionally want a limited-page run to
+update the database.
+
 Run continuously:
 
 ```bash

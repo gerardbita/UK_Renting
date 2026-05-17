@@ -5,6 +5,7 @@ import json
 import math
 import re
 import time
+from collections.abc import Callable
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
@@ -41,7 +42,12 @@ class RightmoveScraper:
             }
         )
 
-    def scrape(self, url: str, max_pages: int | None = None) -> list[Listing]:
+    def scrape(
+        self,
+        url: str,
+        max_pages: int | None = None,
+        progress: Callable[[dict[str, Any]], None] | None = None,
+    ) -> list[Listing]:
         first_html = self._get(url)
         first_page = parse_results_html(first_html, page_url=url)
         pages = page_count(first_page.total_count, len(first_page.listings))
@@ -49,14 +55,58 @@ class RightmoveScraper:
             pages = min(pages, max_pages)
 
         listings_by_key = {listing.listing_key: listing for listing in first_page.listings}
+        report_scrape_progress(
+            progress,
+            source=self.source,
+            current_page=1 if pages else 0,
+            total_pages=pages,
+            current_listings=len(listings_by_key),
+            total_listings=first_page.total_count,
+        )
+        empty_pages = 0
+        last_page = 1 if pages else 0
         for page_number in range(1, pages):
             if self.page_delay_seconds > 0:
                 time.sleep(self.page_delay_seconds)
             page_url = with_result_index(url, page_number * RESULTS_PER_PAGE)
             page = parse_results_html(self._get(page_url), page_url=page_url)
+            last_page = page_number + 1
+            if not page.listings:
+                empty_pages += 1
+            else:
+                empty_pages = 0
             listings_by_key.update(
                 {listing.listing_key: listing for listing in page.listings}
             )
+            report_scrape_progress(
+                progress,
+                source=self.source,
+                current_page=last_page,
+                total_pages=pages,
+                current_listings=len(listings_by_key),
+                total_listings=first_page.total_count,
+            )
+            if empty_pages >= 2:
+                report_scrape_progress(
+                    progress,
+                    source=self.source,
+                    current_page=last_page,
+                    total_pages=pages,
+                    current_listings=len(listings_by_key),
+                    total_listings=first_page.total_count,
+                    done=True,
+                    stopped_early=True,
+                )
+                return list(listings_by_key.values())
+        report_scrape_progress(
+            progress,
+            source=self.source,
+            current_page=last_page,
+            total_pages=pages,
+            current_listings=len(listings_by_key),
+            total_listings=first_page.total_count,
+            done=True,
+        )
         return list(listings_by_key.values())
 
     def _get(self, url: str) -> str:
@@ -72,6 +122,14 @@ class ParsedPage:
     def __init__(self, listings: list[Listing], total_count: int | None):
         self.listings = listings
         self.total_count = total_count
+
+
+def report_scrape_progress(
+    progress: Callable[[dict[str, Any]], None] | None,
+    **event: Any,
+) -> None:
+    if progress is not None:
+        progress(event)
 
 
 def parse_results_html(html: str, *, page_url: str = RIGHTMOVE_BASE_URL) -> ParsedPage:

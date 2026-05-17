@@ -4,10 +4,13 @@ from rentwatch.cli import (
     enabled_sources_from_args,
     filter_urls_by_source,
     preflight_zoopla_access,
+    run_once,
 )
-from rentwatch.config import AppConfig, SearchConfig
+from rentwatch.config import AppConfig, SearchConfig, TelegramConfig
+from rentwatch.db import Store
 from rentwatch.dedupe import assign_canonical_keys, match_score
 from rentwatch.models import Listing
+from rentwatch.notifications import TelegramNotifier
 from rentwatch.scrapers.zoopla import parse_results_html, with_page
 
 
@@ -168,3 +171,44 @@ def test_only_zoopla_sources_filters_urls():
 
     assert sources == {"zoopla"}
     assert filter_urls_by_source(urls, sources) == [urls[1]]
+
+
+def test_limited_page_run_can_be_read_only(tmp_path):
+    class FakeRightmoveScraper:
+        def scrape(self, url, max_pages=None, progress=None):
+            return [
+                Listing(
+                    source="rightmove",
+                    property_id="1",
+                    url="https://www.rightmove.co.uk/properties/1",
+                    address="One Street",
+                    price_text="£1,000 pcm",
+                    price_pcm=1000,
+                )
+            ]
+
+    config = AppConfig(
+        searches=[
+            SearchConfig(
+                name="combined",
+                urls=["https://www.rightmove.co.uk/property-to-rent/find.html"],
+            )
+        ]
+    )
+    store = Store(tmp_path / "rentwatch.sqlite3")
+    try:
+        run_once(
+            config,
+            store,
+            {"rightmove": FakeRightmoveScraper()},
+            TelegramNotifier(TelegramConfig()),
+            notify=False,
+            show_events=False,
+            max_pages=1,
+            calculate_routes=False,
+            record_results=False,
+        )
+
+        assert list(store.iter_listings()) == []
+    finally:
+        store.close()

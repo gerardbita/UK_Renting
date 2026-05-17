@@ -4,6 +4,7 @@ import hashlib
 import json
 import re
 import time
+from collections.abc import Callable
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterable
@@ -47,7 +48,12 @@ class ZooplaScraper:
             }
         )
 
-    def scrape(self, url: str, max_pages: int | None = None) -> list[Listing]:
+    def scrape(
+        self,
+        url: str,
+        max_pages: int | None = None,
+        progress: Callable[[dict[str, Any]], None] | None = None,
+    ) -> list[Listing]:
         first_html = self._get_http(url)
         if first_html is None:
             if not self.browser_fallback:
@@ -59,13 +65,20 @@ class ZooplaScraper:
                 profile_dir=self.browser_profile_dir,
             ) as fetch:
                 first_html = fetch(url)
-                return self._scrape_pages(url, first_html, fetch, max_pages=max_pages)
+                return self._scrape_pages(
+                    url,
+                    first_html,
+                    fetch,
+                    max_pages=max_pages,
+                    progress=progress,
+                )
 
         return self._scrape_pages(
             url,
             first_html,
             self._get_http_required,
             max_pages=max_pages,
+            progress=progress,
         )
 
     def check_access(self, url: str) -> int:
@@ -91,6 +104,7 @@ class ZooplaScraper:
         fetch: Any,
         *,
         max_pages: int | None,
+        progress: Callable[[dict[str, Any]], None] | None,
     ) -> list[Listing]:
         first_page = parse_results_html(first_html, page_url=url)
         pages = first_page.page_count or (1 if first_page.listings else 0)
@@ -98,14 +112,41 @@ class ZooplaScraper:
             pages = min(pages, max_pages)
 
         listings_by_key = {listing.listing_key: listing for listing in first_page.listings}
+        report_scrape_progress(
+            progress,
+            source=self.source,
+            current_page=1 if pages else 0,
+            total_pages=pages,
+            current_listings=len(listings_by_key),
+            total_listings=None,
+        )
+        last_page = 1 if pages else 0
         for page_number in range(2, pages + 1):
             if self.page_delay_seconds > 0:
                 time.sleep(self.page_delay_seconds)
             page_url = with_page(url, page_number)
             page = parse_results_html(fetch(page_url), page_url=page_url)
+            last_page = page_number
             listings_by_key.update(
                 {listing.listing_key: listing for listing in page.listings}
             )
+            report_scrape_progress(
+                progress,
+                source=self.source,
+                current_page=last_page,
+                total_pages=pages,
+                current_listings=len(listings_by_key),
+                total_listings=None,
+            )
+        report_scrape_progress(
+            progress,
+            source=self.source,
+            current_page=last_page,
+            total_pages=pages,
+            current_listings=len(listings_by_key),
+            total_listings=None,
+            done=True,
+        )
         return list(listings_by_key.values())
 
     def _get_http_required(self, url: str) -> str:
@@ -134,6 +175,14 @@ class ParsedPage:
     def __init__(self, listings: list[Listing], page_count: int | None = None):
         self.listings = listings
         self.page_count = page_count
+
+
+def report_scrape_progress(
+    progress: Callable[[dict[str, Any]], None] | None,
+    **event: Any,
+) -> None:
+    if progress is not None:
+        progress(event)
 
 
 def parse_results_html(html: str, *, page_url: str = ZOOPLA_BASE_URL) -> ParsedPage:

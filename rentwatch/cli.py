@@ -22,6 +22,7 @@ from .db import Store, listing_from_row
 from .dedupe import assign_canonical_keys
 from .models import Listing, ListingEvent
 from .notifications import TelegramNotifier, format_event_message
+from .progress import ProgressBar, compact_detail
 from .rightmove_location import LocationLookupError, lookup_rightmove_locations
 from .rightmove_url import RightmoveUrlOptions, build_rightmove_url
 from .routing import RouteMetrics, RoutingError, TflRoutingClient, route_key
@@ -117,6 +118,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--max-pages",
         type=int,
         help="Limit Rightmove result pages per search. Useful while testing.",
+    )
+    run_parser.add_argument(
+        "--allow-partial-write",
+        action="store_true",
+        help="Allow --max-pages runs to update the database. Off by default.",
     )
     run_parser.add_argument(
         "--skip-routes",
@@ -365,6 +371,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 refresh_routes=args.refresh_routes,
                 routing_client=routing_client,
                 enabled_sources=enabled_sources,
+                record_results=args.max_pages is None or args.allow_partial_write,
             )
             if args.once:
                 return 0
@@ -514,6 +521,50 @@ def cmd_auth_zoopla(args: argparse.Namespace) -> int:
     return 0
 
 
+class ScrapeProgress:
+    def __init__(self, source: str):
+        self.source = source
+        self.bar: ProgressBar | None = None
+
+    def __call__(self, event: dict[str, object]) -> None:
+        total_pages = optional_int(event.get("total_pages"))
+        current_page = optional_int(event.get("current_page")) or 0
+        if self.bar is None:
+            self.bar = ProgressBar(
+                f"{self.source.title()} scrape",
+                total=total_pages,
+                unit="pages",
+            )
+
+        detail = self.detail(event)
+        if event.get("done"):
+            self.bar.current = current_page
+            self.bar.finish(detail=detail)
+            return
+        self.bar.update(current_page, detail=detail)
+
+    @staticmethod
+    def detail(event: dict[str, object]) -> str:
+        current_listings = optional_int(event.get("current_listings")) or 0
+        total_listings = optional_int(event.get("total_listings"))
+        if total_listings:
+            parts = [f"{current_listings:,}/{total_listings:,} headline listings"]
+        else:
+            parts = [f"{current_listings:,} listings"]
+        if event.get("stopped_early"):
+            parts.append("stopped after empty result pages")
+        return " | ".join(parts)
+
+
+def optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def run_once(
     config: AppConfig,
     store: Store,
@@ -528,6 +579,7 @@ def run_once(
     refresh_routes: bool = False,
     routing_client: TflRoutingClient | None = None,
     enabled_sources: set[str] | None = None,
+    record_results: bool = True,
 ) -> None:
     for search in config.searches:
         print(f"Checking {search.name}...")
@@ -547,7 +599,11 @@ def run_once(
                 )
                 continue
             try:
-                portal_listings = scraper.scrape(url, max_pages=max_pages)
+                portal_listings = scraper.scrape(
+                    url,
+                    max_pages=max_pages,
+                    progress=ScrapeProgress(source),
+                )
             except (ScraperError, LocationLookupError, ValueError) as exc:
                 print(f"Failed {search.name} ({source}): {exc}", file=sys.stderr)
                 continue
@@ -563,7 +619,7 @@ def run_once(
         assign_canonical_keys(scraped, store.iter_listing_models())
 
         listings = apply_filters(search, scraped)
-        if calculate_routes:
+        if calculate_routes and record_results:
             enrich_listings_with_routes(
                 config,
                 store,
@@ -572,6 +628,12 @@ def run_once(
                 route_limit=route_limit,
                 refresh_routes=refresh_routes,
             )
+        elif calculate_routes and not record_results:
+            print("Limited page run: skipped route calculation.")
+        if not record_results:
+            print("Limited page run: read-only; skipped database writes.")
+            print(f"{search.name}: {len(listings)} matching listings, 0 changes recorded.")
+            continue
         events = filter_notifiable_events(
             search,
             store.record_search_results(
@@ -629,12 +691,18 @@ def enrich_listings_with_routes(
     route_date = next_weekday_date(routing.departure_day)
     route_time = normalize_route_time(routing.departure_time)
     cache_profile = f"{routing.departure_day.lower()}-{route_time}"
+    route_progress = ProgressBar(
+        "Routes",
+        total=len(candidates),
+        unit="listings",
+    )
     print(
         f"Calculating routes for {len(candidates)} listing(s) "
         f"to {len(targets)} target(s) "
         f"for {routing.departure_day} {routing.departure_time}..."
     )
-    for listing in candidates:
+    updated_count = 0
+    for candidate_index, listing in enumerate(candidates, start=1):
         updated = False
         route_targets = []
         for index, target in enumerate(targets):
@@ -701,9 +769,16 @@ def enrich_listings_with_routes(
             listing.route_target_longitude = first_target.longitude
             listing.route_targets = route_targets
             listing.route_updated_at = utc_now()
+            updated_count += 1
+
+        route_progress.update(
+            candidate_index,
+            detail=compact_detail(listing.address or listing.title or listing.url),
+        )
 
         if routing.request_delay_seconds > 0:
             time.sleep(routing.request_delay_seconds)
+    route_progress.finish(detail=f"updated route data for {updated_count:,} listing(s)")
 
 
 def listing_has_complete_targets(listing: Listing, config: AppConfig) -> bool:

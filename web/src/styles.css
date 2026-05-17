@@ -497,6 +497,12 @@ a:hover {
   gap: 6px;
 }
 
+.map-popup-sources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .map-popup a {
   display: inline-flex;
   align-items: center;

@@ -193,6 +193,7 @@ class RoutingConfig:
 class SearchConfig:
     name: str
     url: str = ""
+    urls: list[str] = field(default_factory=list)
     rightmove: RightmoveUrlOptions | None = None
     include_keywords: list[str] = field(default_factory=list)
     exclude_keywords: list[str] = field(default_factory=list)
@@ -205,9 +206,12 @@ class SearchConfig:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "SearchConfig":
         rightmove_data = data.get("rightmove")
+        urls = [str(item) for item in data.get("urls", []) if str(item).strip()]
+        url = str(data.get("url", "")).strip()
         return cls(
             name=str(data["name"]),
-            url=str(data.get("url", "")),
+            url=url,
+            urls=urls,
             rightmove=(
                 RightmoveUrlOptions.from_dict(rightmove_data)
                 if rightmove_data is not None
@@ -235,16 +239,33 @@ class SearchConfig:
         }
         if self.url:
             data["url"] = self.url
+        if self.urls:
+            data["urls"] = self.urls
         if self.rightmove is not None:
             data["rightmove"] = self.rightmove.to_dict()
         return data
 
     def resolved_url(self) -> str:
-        if self.url:
-            return self.url
-        if self.rightmove is not None:
-            return build_rightmove_url(self.rightmove)
+        urls = self.resolved_urls()
+        if urls:
+            return urls[0]
         raise ValueError(f"Search {self.name!r} has neither url nor rightmove config.")
+
+    def resolved_urls(self) -> list[str]:
+        urls = []
+        if self.url:
+            urls.append(self.url)
+        urls.extend(self.urls)
+        if self.rightmove is not None:
+            urls.append(build_rightmove_url(self.rightmove))
+        seen = set()
+        unique_urls = []
+        for url in urls:
+            if url in seen:
+                continue
+            seen.add(url)
+            unique_urls.append(url)
+        return unique_urls
 
 
 @dataclass(slots=True)
@@ -320,21 +341,31 @@ def sample_config() -> AppConfig:
         searches=[
             SearchConfig(
                 name="Example W2 garden unfurnished",
-                url=(
-                    "https://www.rightmove.co.uk/property-to-rent/find.html?"
-                    "searchLocation=W2+1SJ&useLocationIdentifier=true&"
-                    "locationIdentifier=POSTCODE%5E918640&rent=To+rent&radius=5.0&"
-                    "maxPrice=2250&index=0&sortType=6&channel=RENT&"
-                    "transactionType=LETTING&displayLocationIdentifier=undefined&"
-                    "propertyTypes=detached%2Csemi-detached%2Cterraced%2Cflat%2Cbungalow&"
-                    "minBedrooms=1&minPrice=1000&"
-                    "dontShow=houseShare%2Cretirement%2Cstudent&mustHave=garden&"
-                    "furnishTypes=unfurnished%2CpartFurnished"
-                ),
+                urls=[
+                    (
+                        "https://www.rightmove.co.uk/property-to-rent/find.html?"
+                        "minBedrooms=1&propertyTypes=detached%2Csemi-detached%2C"
+                        "terraced%2Cflat%2Cbungalow&furnishTypes=unfurnished%2C"
+                        "partFurnished&dontShow=houseShare%2Cretirement%2Cstudent&"
+                        "channel=RENT&index=0&sortType=6&minPrice=1000&"
+                        "maxPrice=2500&radius=10.0&locationIdentifier=POSTCODE%5E918640"
+                    ),
+                    (
+                        "https://www.zoopla.co.uk/to-rent/property/london/"
+                        "st-marys-terrace/w2-1sj/?beds_min=1&"
+                        "furnished_state=unfurnished&is_retirement_home=false&"
+                        "is_shared_accommodation=false&is_student_accommodation=false&"
+                        "price_frequency=per_month&price_max=2500&price_min=1000&"
+                        "property_sub_type=semi_detached&property_sub_type=flats&"
+                        "property_sub_type=detached&property_sub_type=terraced&"
+                        "property_sub_type=bungalow&q=W2%201SJ&radius=10&"
+                        "search_source=to-rent"
+                    ),
+                ],
                 include_keywords=[],
                 exclude_keywords=["student", "short let"],
                 min_price_pcm=1000,
-                max_price_pcm=2250,
+                max_price_pcm=2500,
             )
         ]
     )

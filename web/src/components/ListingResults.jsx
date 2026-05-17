@@ -7,6 +7,7 @@ export default function ListingResults({ listings, targets, selectedIds, onToggl
       "address",
       "price_pcm",
       "bedrooms",
+      "sources",
       "score",
       ...targets.flatMap((target) => [
         `${target.name} transit minutes`,
@@ -21,6 +22,7 @@ export default function ListingResults({ listings, targets, selectedIds, onToggl
       listing.address || listing.title || "",
       listing.price_pcm || "",
       listing.bedrooms || "",
+      sourceNames(listing).join(" + "),
       listing.score,
       ...listing.routes.flatMap((route) => [
         route.transit_minutes ?? "",
@@ -90,7 +92,8 @@ export default function ListingResults({ listings, targets, selectedIds, onToggl
               <div className="listing-thumb" aria-hidden="true">{initialsFor(listing)}</div>
               <h3>{listing.address || listing.title || "Untitled listing"}</h3>
               <p>
-                {listing.agent || listing.title || "Rightmove listing"}
+                {sourceNames(listing).join(" + ") || "Property listing"}
+                {listing.agent ? ` · ${listing.agent}` : ""}
               </p>
             </div>
 
@@ -109,7 +112,11 @@ export default function ListingResults({ listings, targets, selectedIds, onToggl
             </div>
 
             <div className="action-row">
-              <a href={listing.url} target="_blank" rel="noreferrer">Rightmove</a>
+              {sourceLinks(listing).map((source) => (
+                <a key={`${listing.id}:${source.source}`} href={source.url} target="_blank" rel="noreferrer">
+                  {sourceLabel(source.source)}
+                </a>
+              ))}
               {targets.map((target, targetIndex) => (
                 <a
                   key={`${listing.id}:${target.name}:map`}
@@ -170,6 +177,25 @@ function directionsUrl(listing, target, mode) {
   const origin = `${listing.latitude},${listing.longitude}`;
   const destination = `${target.latitude},${target.longitude}`;
   return `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&travelmode=${mode}`;
+}
+
+function sourceLinks(listing) {
+  if (Array.isArray(listing.sources) && listing.sources.length) {
+    return listing.sources.filter((source) => source.url);
+  }
+  return listing.url ? [{ source: listing.source || "source", url: listing.url }] : [];
+}
+
+function sourceNames(listing) {
+  return sourceLinks(listing).map((source) => sourceLabel(source.source));
+}
+
+function sourceLabel(source) {
+  const labels = {
+    rightmove: "Rightmove",
+    zoopla: "Zoopla",
+  };
+  return labels[source] || String(source || "Source");
 }
 
 function formatMinutes(value) {

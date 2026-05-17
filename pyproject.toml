@@ -1,11 +1,12 @@
 [project]
 name = "rentwatch"
 version = "0.1.0"
-description = "Personal property search monitor with Rightmove support and Telegram notifications."
+description = "Personal property search monitor with Rightmove, Zoopla, routes, and Telegram notifications."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "beautifulsoup4>=4.12",
+    "playwright>=1.40",
     "requests>=2.31",
 ]
 

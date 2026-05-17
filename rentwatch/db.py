@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS listings (
     route_target_longitude REAL,
     route_targets_json TEXT,
     route_updated_at TEXT,
+    canonical_key TEXT,
     agent TEXT,
     summary TEXT,
     title TEXT,
@@ -245,6 +246,16 @@ class Store:
             """
         )
 
+    def iter_listing_models(self) -> list[Listing]:
+        rows = self.connection.execute(
+            """
+            SELECT *
+            FROM listings
+            ORDER BY last_seen_at DESC, listing_key
+            """
+        ).fetchall()
+        return [listing_from_row(row) for row in rows]
+
     def update_listing_routes(self, listing: Listing) -> None:
         with self.connection:
             self.connection.execute(
@@ -355,9 +366,10 @@ class Store:
                     price_pcm, bedrooms, latitude, longitude, agent, summary,
                     transit_minutes, transit_distance_km, cycling_minutes,
                     cycling_distance_km, route_target_latitude,
-                    route_target_longitude, route_targets_json, route_updated_at, title, first_seen_at,
-                    last_seen_at, last_changed_at, raw_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    route_target_longitude, route_targets_json, route_updated_at,
+                    canonical_key, title, first_seen_at, last_seen_at,
+                    last_changed_at, raw_json
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     listing.listing_key,
@@ -380,6 +392,7 @@ class Store:
                     listing.route_target_longitude,
                     json.dumps(listing.route_targets or [], sort_keys=True),
                     listing.route_updated_at,
+                    listing.canonical_key,
                     listing.title,
                     now,
                     now,
@@ -414,6 +427,7 @@ class Store:
                 route_target_longitude = ?,
                 route_targets_json = ?,
                 route_updated_at = ?,
+                canonical_key = ?,
                 title = ?,
                 last_seen_at = ?,
                 last_changed_at = ?,
@@ -438,6 +452,7 @@ class Store:
                 route_values["route_target_longitude"],
                 route_values["route_targets_json"],
                 route_values["route_updated_at"],
+                listing.canonical_key,
                 listing.title,
                 now,
                 changed_at,
@@ -489,6 +504,7 @@ class Store:
             ("route_target_longitude", "REAL"),
             ("route_targets_json", "TEXT"),
             ("route_updated_at", "TEXT"),
+            ("canonical_key", "TEXT"),
         ]:
             if column not in existing:
                 self.connection.execute(
@@ -515,6 +531,7 @@ def listing_from_row(row: sqlite3.Row) -> Listing:
         route_target_longitude=row["route_target_longitude"],
         route_targets=json.loads(row["route_targets_json"] or "[]"),
         route_updated_at=row["route_updated_at"] or "",
+        canonical_key=row["canonical_key"] or "",
         agent=row["agent"] or "",
         summary=row["summary"] or "",
         title=row["title"] or "",

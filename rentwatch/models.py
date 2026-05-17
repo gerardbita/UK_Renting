@@ -26,6 +26,7 @@ class Listing:
     agent: str = ""
     summary: str = ""
     title: str = ""
+    canonical_key: str = ""
     raw: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -60,6 +61,7 @@ class Listing:
             "agent": self.agent,
             "summary": self.summary,
             "title": self.title,
+            "canonical_key": self.canonical_key,
         }
 
 

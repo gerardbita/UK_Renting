@@ -8,6 +8,7 @@ import time
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 from .config import (
     DEFAULT_CONFIG_PATH,
@@ -18,12 +19,14 @@ from .config import (
     save_config,
 )
 from .db import Store, listing_from_row
+from .dedupe import assign_canonical_keys
 from .models import Listing, ListingEvent
 from .notifications import TelegramNotifier, format_event_message
 from .rightmove_location import LocationLookupError, lookup_rightmove_locations
 from .rightmove_url import RightmoveUrlOptions, build_rightmove_url
 from .routing import RouteMetrics, RoutingError, TflRoutingClient, route_key
 from .scrapers.rightmove import RightmoveScraper, ScraperError
+from .scrapers.zoopla import ZooplaScraper, open_zoopla_browser_profile
 from .db import utc_now
 
 
@@ -60,7 +63,7 @@ def build_parser() -> argparse.ArgumentParser:
     init_parser.add_argument("--force", action="store_true", help="Overwrite an existing file.")
     init_parser.set_defaults(func=cmd_init_config)
 
-    add_parser = subparsers.add_parser("add", help="Add a Rightmove search to the config.")
+    add_parser = subparsers.add_parser("add", help="Add a pasted property search URL to the config.")
     add_parser.add_argument("name")
     add_parser.add_argument("url")
     add_parser.add_argument("--include", action="append", default=[])
@@ -161,6 +164,17 @@ def build_parser() -> argparse.ArgumentParser:
         "test-telegram", help="Send a test Telegram message."
     )
     telegram_parser.set_defaults(func=cmd_test_telegram)
+
+    zoopla_auth_parser = subparsers.add_parser(
+        "auth-zoopla",
+        help="Open Zoopla in the RentWatch browser profile to complete verification.",
+    )
+    zoopla_auth_parser.add_argument(
+        "url",
+        nargs="?",
+        help="Zoopla URL to open. Defaults to the first Zoopla URL in config.json.",
+    )
+    zoopla_auth_parser.set_defaults(func=cmd_auth_zoopla)
     return parser
 
 
@@ -176,13 +190,17 @@ def cmd_init_config(args: argparse.Namespace) -> int:
 
 def cmd_add(args: argparse.Namespace) -> int:
     config = load_config(args.config)
-    if any(search.name == args.name for search in config.searches):
-        print(f"A search named {args.name!r} already exists.", file=sys.stderr)
-        return 2
+    existing = next((search for search in config.searches if search.name == args.name), None)
+    if existing is not None:
+        if args.url not in existing.resolved_urls():
+            existing.urls.append(args.url)
+        save_config(config, args.config)
+        print(f"Added URL to existing search {args.name!r} in {args.config}")
+        return 0
     config.searches.append(
         SearchConfig(
             name=args.name,
-            url=args.url,
+            urls=[args.url],
             include_keywords=[item.lower() for item in args.include],
             exclude_keywords=[item.lower() for item in args.exclude],
             min_price_pcm=args.min_price_pcm,
@@ -299,11 +317,7 @@ def cmd_run(args: argparse.Namespace) -> int:
         config.notifications.telegram,
         timeout_seconds=config.http.timeout_seconds,
     )
-    scraper = RightmoveScraper(
-        timeout_seconds=config.http.timeout_seconds,
-        user_agent=config.http.user_agent,
-        page_delay_seconds=config.polling.page_delay_seconds,
-    )
+    scrapers = build_scrapers(config)
     routing_client = TflRoutingClient(
         timeout_seconds=config.http.timeout_seconds,
         user_agent=config.http.user_agent,
@@ -314,7 +328,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             run_once(
                 config,
                 store,
-                scraper,
+                scrapers,
                 notifier,
                 notify=not args.no_notify and not args.prime,
                 show_events=not args.prime,
@@ -454,10 +468,28 @@ def cmd_test_telegram(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_auth_zoopla(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    url = args.url or first_zoopla_url(config)
+    if not url:
+        print("No Zoopla URL found in config.json.", file=sys.stderr)
+        return 2
+    try:
+        open_zoopla_browser_profile(
+            url,
+            profile_dir=Path(".rentwatch-browser") / "zoopla",
+            timeout_seconds=config.http.timeout_seconds,
+        )
+    except ScraperError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    return 0
+
+
 def run_once(
     config: AppConfig,
     store: Store,
-    scraper: RightmoveScraper,
+    scrapers: dict[str, object],
     notifier: TelegramNotifier,
     *,
     notify: bool,
@@ -470,12 +502,36 @@ def run_once(
 ) -> None:
     for search in config.searches:
         print(f"Checking {search.name}...")
-        try:
-            url = resolve_search_url(search, config)
-            scraped = scraper.scrape(url, max_pages=max_pages)
-        except (ScraperError, LocationLookupError, ValueError) as exc:
-            print(f"Failed {search.name}: {exc}", file=sys.stderr)
+        scraped_by_key: dict[str, Listing] = {}
+        urls = resolve_search_urls(search, config)
+        if not urls:
+            print(f"Failed {search.name}: no URLs configured.", file=sys.stderr)
             continue
+
+        for url in urls:
+            source = source_for_url(url)
+            scraper = scrapers.get(source)
+            if scraper is None:
+                print(
+                    f"Failed {search.name}: unsupported property portal URL: {url}",
+                    file=sys.stderr,
+                )
+                continue
+            try:
+                portal_listings = scraper.scrape(url, max_pages=max_pages)
+            except (ScraperError, LocationLookupError, ValueError) as exc:
+                print(f"Failed {search.name} ({source}): {exc}", file=sys.stderr)
+                continue
+            scraped_by_key.update(
+                {listing.listing_key: listing for listing in portal_listings}
+            )
+
+        if not scraped_by_key:
+            print(f"{search.name}: no listings scraped.")
+            continue
+
+        scraped = list(scraped_by_key.values())
+        assign_canonical_keys(scraped, store.iter_listing_models())
 
         listings = apply_filters(search, scraped)
         if calculate_routes:
@@ -856,6 +912,9 @@ def print_event(event: ListingEvent) -> None:
 
 def describe_filters(search: SearchConfig) -> str:
     parts = []
+    urls = search.resolved_urls()
+    if len(urls) > 1:
+        parts.append(f"{len(urls)} portal URLs")
     if search.min_price_pcm is not None:
         parts.append(f"min GBP {search.min_price_pcm} pcm")
     if search.max_price_pcm is not None:
@@ -916,18 +975,61 @@ def rightmove_options_from_args(args: argparse.Namespace) -> RightmoveUrlOptions
 
 
 def resolve_search_url(search: SearchConfig, config: AppConfig) -> str:
-    if search.url:
-        return search.url
-    if search.rightmove is None:
-        raise ValueError(f"Search {search.name!r} has neither url nor rightmove config.")
+    urls = resolve_search_urls(search, config)
+    if urls:
+        return urls[0]
+    raise ValueError(f"Search {search.name!r} has neither url nor rightmove config.")
 
-    return build_rightmove_url(
+
+def resolve_search_urls(search: SearchConfig, config: AppConfig) -> list[str]:
+    if search.rightmove is None:
+        return search.resolved_urls()
+
+    rightmove_url = build_rightmove_url(
         resolve_rightmove_options(
             search.rightmove,
             timeout_seconds=config.http.timeout_seconds,
             user_agent=config.http.user_agent,
         )
     )
+    urls = []
+    if search.url:
+        urls.append(search.url)
+    urls.extend(search.urls)
+    urls.append(rightmove_url)
+    return list(dict.fromkeys(urls))
+
+
+def build_scrapers(config: AppConfig) -> dict[str, object]:
+    kwargs = {
+        "timeout_seconds": config.http.timeout_seconds,
+        "user_agent": config.http.user_agent,
+        "page_delay_seconds": config.polling.page_delay_seconds,
+    }
+    return {
+        "rightmove": RightmoveScraper(**kwargs),
+        "zoopla": ZooplaScraper(
+            **kwargs,
+            browser_profile_dir=Path(".rentwatch-browser") / "zoopla",
+        ),
+    }
+
+
+def first_zoopla_url(config: AppConfig) -> str:
+    for search in config.searches:
+        for url in search.resolved_urls():
+            if source_for_url(url) == "zoopla":
+                return url
+    return ""
+
+
+def source_for_url(url: str) -> str:
+    host = urlparse(url).netloc.lower()
+    if "rightmove.co.uk" in host:
+        return "rightmove"
+    if "zoopla.co.uk" in host:
+        return "zoopla"
+    return ""
 
 
 def resolve_rightmove_options(

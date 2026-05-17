@@ -1,9 +1,10 @@
 # RentWatch
 
 RentWatch is a personal property search monitor. It is inspired by the small
-RightMoveScraper script, but stores state in SQLite, supports multiple searches,
-tracks price changes, filters results, and sends Telegram notifications safely
-using POST requests.
+RightMoveScraper script, but stores state in SQLite, supports Rightmove and
+Zoopla search URLs, tracks price changes, filters results, deduplicates matching
+homes across portals, and sends Telegram notifications safely using POST
+requests.
 
 Use it at low frequency for personal monitoring. Check the website's terms before
 running it, and do not use it for high-volume or commercial scraping.
@@ -24,27 +25,48 @@ Create a starter config:
 python3 -m rentwatch init-config
 ```
 
-Or add a search directly:
+Or add a pasted search URL directly:
 
 ```bash
 python3 -m rentwatch add "Camden 1-bed" "https://www.rightmove.co.uk/property-to-rent/find.html?..."
 ```
 
-Searches are normally pasted Rightmove result URLs:
+You can add a Zoopla URL under the same search name. RentWatch will keep one
+combined search and merge duplicate homes when the signals are strong enough:
+
+```bash
+python3 -m rentwatch add "Camden 1-bed" "https://www.zoopla.co.uk/to-rent/property/..."
+```
+
+Searches can contain one URL or multiple portal URLs:
 
 ```json
 {
   "name": "W2 garden unfurnished",
-  "url": "https://www.rightmove.co.uk/property-to-rent/find.html?...",
+  "urls": [
+    "https://www.rightmove.co.uk/property-to-rent/find.html?...",
+    "https://www.zoopla.co.uk/to-rent/property/..."
+  ],
   "include_keywords": [],
   "exclude_keywords": ["student", "short let"],
   "min_price_pcm": 1000,
-  "max_price_pcm": 2250,
+  "max_price_pcm": 2500,
   "notify_new": true,
   "notify_price_changes": true,
   "notify_removed": false
 }
 ```
+
+Zoopla blocks normal Python HTTP requests more aggressively than Rightmove. If a
+Zoopla run reports a browser verification page, run this once and complete the
+verification in the Chrome window that opens:
+
+```bash
+python3 -m rentwatch auth-zoopla
+```
+
+The verification profile is stored locally under `.rentwatch-browser/` and is
+ignored by git.
 
 Optional routing can calculate TfL public-transport and cycling time to a
 specific target. To calculate routes to more than one place, add `targets`:
@@ -157,9 +179,10 @@ python3 -m rentwatch test-telegram
 - returned listings
 - removed listings, if enabled per search
 - price changes
-- latitude and longitude, when Rightmove includes map coordinates
+- latitude and longitude, when the portal includes map coordinates
 - TfL public-transport time/distance to your configured target
 - TfL cycling time/distance to your configured target
+- source links for matching Rightmove/Zoopla listings shown as one home
 - first and last seen timestamps
 - price history
 

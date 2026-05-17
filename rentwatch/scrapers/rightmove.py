@@ -12,14 +12,11 @@ import requests
 from bs4 import BeautifulSoup, Tag
 
 from rentwatch.models import Listing
+from rentwatch.scrapers.base import ScraperError
 
 
 RIGHTMOVE_BASE_URL = "https://www.rightmove.co.uk"
 RESULTS_PER_PAGE = 24
-
-
-class ScraperError(RuntimeError):
-    pass
 
 
 class RightmoveScraper:
@@ -321,7 +318,7 @@ def parse_price_pcm(price_text: str) -> int | None:
 
 
 def parse_bedrooms(text: str) -> int | None:
-    match = re.search(r"\b([0-9]+)\s*(?:bed|bedroom|bedrooms)\b", text.lower())
+    match = re.search(r"\b([0-9]+)\s*(?:beds?|bedrooms?)\b", text.lower())
     if not match:
         return None
     return int(match.group(1))

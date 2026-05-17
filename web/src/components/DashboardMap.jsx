@@ -148,12 +148,18 @@ function renderPopup(listing) {
       `;
     })
     .join("");
+  const sources = sourceLinks(listing)
+    .map(
+      (source) =>
+        `<a href="${escapeAttribute(source.url)}" target="_blank" rel="noreferrer">Open ${escapeHtml(sourceLabel(source.source))}</a>`,
+    )
+    .join("");
   return `
     <div class="map-popup">
       <strong>${escapeHtml(listing.address || listing.title || "Untitled listing")}</strong>
       <span>${escapeHtml(listing.price_text || "Price unavailable")}</span>
       ${routes}
-      <a href="${escapeAttribute(listing.url)}" target="_blank" rel="noreferrer">Open Rightmove</a>
+      <div class="map-popup-sources">${sources}</div>
     </div>
   `;
 }
@@ -181,4 +187,19 @@ function escapeHtml(value) {
 
 function escapeAttribute(value) {
   return escapeHtml(value).replaceAll("`", "&#096;");
+}
+
+function sourceLinks(listing) {
+  if (Array.isArray(listing.sources) && listing.sources.length) {
+    return listing.sources.filter((source) => source.url);
+  }
+  return listing.url ? [{ source: listing.source || "source", url: listing.url }] : [];
+}
+
+function sourceLabel(source) {
+  const labels = {
+    rightmove: "Rightmove",
+    zoopla: "Zoopla",
+  };
+  return labels[source] || String(source || "Source");
 }

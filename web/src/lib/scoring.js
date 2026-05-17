@@ -6,7 +6,7 @@ export function enrichListings(listings, targets) {
     const score = scoreListing(listing, routes);
     return {
       ...listing,
-      id: `${listing.search_name || "search"}:${listing.url || listing.address}`,
+      id: `${listing.search_name || "search"}:${listing.canonical_key || listing.url || listing.address}`,
       routes,
       score,
       best_commute_minutes: bestCommuteAverage(routes),

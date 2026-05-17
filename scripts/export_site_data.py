@@ -14,8 +14,13 @@ WEB_OUTPUT_PATH = ROOT / "web" / "public" / "data" / "listings.json"
 
 
 FIELDS = [
+    "canonical_key",
     "search_name",
     "status",
+    "source",
+    "source_count",
+    "source_names",
+    "sources",
     "price_pcm",
     "price_text",
     "bedrooms",
@@ -68,6 +73,11 @@ def main() -> int:
             l.route_target_latitude,
             l.route_target_longitude,
             l.route_targets_json,
+            l.listing_key,
+            l.source,
+            l.property_id,
+            l.canonical_key,
+            l.raw_json,
             l.address,
             l.agent,
             l.title,
@@ -84,13 +94,42 @@ def main() -> int:
     ).fetchall()
     con.close()
 
-    listings = []
+    grouped = {}
     for row in rows:
-        listing = {field: row[field] for field in FIELDS if field in row.keys()}
-        listing["route_targets"] = json.loads(row["route_targets_json"] or "[]")
-        listing["has_garden"] = has_any(row, ["garden", "patio", "terrace", "outdoor space"])
-        listing["has_parking"] = has_any(row, ["parking", "car park", "off street", "off-street", "garage"])
+        canonical_key = row["canonical_key"] or row["listing_key"]
+        group_key = (row["search_name"], canonical_key)
+        grouped.setdefault(group_key, []).append(row)
+
+    listings = []
+    for (_, canonical_key), group in grouped.items():
+        primary = choose_primary_row(group)
+        listing = {field: primary[field] for field in FIELDS if field in primary.keys()}
+        listing["canonical_key"] = canonical_key
+        listing["status"] = "active" if any(row["status"] == "active" for row in group) else "removed"
+        listing["search_first_seen_at"] = min(row["search_first_seen_at"] for row in group)
+        listing["search_last_seen_at"] = max(row["search_last_seen_at"] for row in group)
+        listing["route_targets"] = json.loads(primary["route_targets_json"] or "[]")
+        listing["has_garden"] = any(has_any(row, ["garden", "patio", "terrace", "outdoor space"]) for row in group)
+        listing["has_parking"] = any(has_any(row, ["parking", "car park", "off street", "off-street", "garage"]) for row in group)
+        listing["sources"] = [source_payload(row) for row in sorted(group, key=source_sort_key)]
+        listing["source_count"] = len(listing["sources"])
+        listing["source_names"] = [source["source"] for source in listing["sources"]]
+        listing["source"] = listing["sources"][0]["source"] if listing["sources"] else primary["source"]
+        best_price = best_price_row(group)
+        if best_price is not None:
+            listing["price_pcm"] = best_price["price_pcm"]
+            listing["price_text"] = best_price["price_text"]
         listings.append(listing)
+
+    listings.sort(
+        key=lambda listing: (
+            0 if listing["status"] == "active" else 1,
+            listing.get("transit_minutes") is None,
+            listing.get("transit_minutes") or 9999,
+            listing.get("price_pcm") or 999999,
+            listing.get("address") or "",
+        )
+    )
     payload = {
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "routing": safe_routing_config(config.get("routing", {})),
@@ -123,6 +162,67 @@ def ensure_site_columns(con: sqlite3.Connection) -> None:
     if "route_targets_json" not in columns:
         con.execute("ALTER TABLE listings ADD COLUMN route_targets_json TEXT")
         con.commit()
+    if "canonical_key" not in columns:
+        con.execute("ALTER TABLE listings ADD COLUMN canonical_key TEXT")
+        con.commit()
+
+
+def choose_primary_row(rows: list[sqlite3.Row]) -> sqlite3.Row:
+    return sorted(rows, key=primary_sort_key)[0]
+
+
+def primary_sort_key(row: sqlite3.Row) -> tuple:
+    route_targets = json.loads(row["route_targets_json"] or "[]")
+    route_count = sum(
+        1
+        for route in route_targets
+        if route.get("transit_minutes") is not None or route.get("cycling_minutes") is not None
+    )
+    return (
+        0 if row["status"] == "active" else 1,
+        -route_count,
+        0 if row["latitude"] is not None and row["longitude"] is not None else 1,
+        0 if row["price_pcm"] is not None else 1,
+        source_sort_index(row["source"]),
+        row["listing_key"],
+    )
+
+
+def best_price_row(rows: list[sqlite3.Row]) -> sqlite3.Row | None:
+    candidates = [
+        row
+        for row in rows
+        if row["status"] == "active" and row["price_pcm"] is not None
+    ]
+    if not candidates:
+        candidates = [row for row in rows if row["price_pcm"] is not None]
+    return min(candidates, key=lambda row: row["price_pcm"]) if candidates else None
+
+
+def source_payload(row: sqlite3.Row) -> dict:
+    return {
+        "source": row["source"],
+        "listing_key": row["listing_key"],
+        "property_id": row["property_id"],
+        "url": row["url"],
+        "status": row["status"],
+        "price_text": row["price_text"],
+        "price_pcm": row["price_pcm"],
+        "agent": row["agent"],
+        "title": row["title"],
+        "address": row["address"],
+        "search_first_seen_at": row["search_first_seen_at"],
+        "search_last_seen_at": row["search_last_seen_at"],
+    }
+
+
+def source_sort_key(row: sqlite3.Row) -> tuple:
+    return (source_sort_index(row["source"]), row["listing_key"])
+
+
+def source_sort_index(source: str) -> int:
+    order = {"rightmove": 0, "zoopla": 1}
+    return order.get(source, 99)
 
 
 def safe_routing_config(routing: dict) -> dict:

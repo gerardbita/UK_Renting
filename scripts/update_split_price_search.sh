@@ -13,6 +13,7 @@ DRY_RUN="${DRY_RUN:-0}"
 SEND_NOTIFICATIONS="${SEND_NOTIFICATIONS:-0}"
 AUTH_ZOOPLA="${AUTH_ZOOPLA:-0}"
 SKIP_ROUTES="${SKIP_ROUTES:-0}"
+RUN_ZOOPLA="${RUN_ZOOPLA:-0}"
 
 if [[ -z "$PYTHON_BIN" ]]; then
   if [[ -x "$ROOT/.venv/bin/python" ]]; then
@@ -206,6 +207,20 @@ fi
 if [[ "$SKIP_ROUTES" == "1" ]]; then
   run_args+=(--skip-routes)
 fi
+case "$RUN_ZOOPLA" in
+  0|false|no)
+    run_args+=(--skip-zoopla)
+    ;;
+  only)
+    run_args+=(--only-zoopla)
+    ;;
+  1|true|yes)
+    ;;
+  *)
+    echo "RUN_ZOOPLA must be 1, 0, or only. Got: $RUN_ZOOPLA" >&2
+    exit 2
+    ;;
+esac
 
 "$PYTHON_BIN" -m rentwatch --config "$CONFIG_PATH" "${run_args[@]}"
 "$PYTHON_BIN" scripts/export_site_data.py

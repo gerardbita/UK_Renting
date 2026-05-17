@@ -77,6 +77,22 @@ starts. You can bypass that startup check while debugging with:
 python3 -m rentwatch run --skip-zoopla-preflight
 ```
 
+If Zoopla verification is getting in the way, keep the Zoopla URLs in
+`config.json` but skip them for a run:
+
+```bash
+python3 -m rentwatch run --once --skip-zoopla
+```
+
+To test Zoopla only:
+
+```bash
+python3 -m rentwatch run --once --only-zoopla
+```
+
+Normal `run` includes every configured portal. Use `--skip-zoopla` whenever you
+want Rightmove-only without editing `config.json`.
+
 Optional routing can calculate TfL public-transport and cycling time to a
 specific target. To calculate routes to more than one place, add `targets`:
 
@@ -139,6 +155,27 @@ scripts/update_split_price_search.sh
 
 The default bands are `1000-1650`, `1651-1900`, `1901-2100`, `2101-2300`, and
 `2301-2500`. It keeps the search name as `Noemie work and Gerard work`.
+
+To run the full update without Zoopla:
+
+```bash
+RUN_ZOOPLA=0 scripts/update_split_price_search.sh
+```
+
+`RUN_ZOOPLA=0` is the default for this script, so Zoopla is skipped unless you
+explicitly opt in.
+
+To run Rightmove plus Zoopla:
+
+```bash
+RUN_ZOOPLA=1 scripts/update_split_price_search.sh
+```
+
+To run only Zoopla:
+
+```bash
+RUN_ZOOPLA=only scripts/update_split_price_search.sh
+```
 
 If you already have listings in `rentwatch.sqlite3` and only need to fill new
 route targets, use the database-only route backfill. This avoids fetching

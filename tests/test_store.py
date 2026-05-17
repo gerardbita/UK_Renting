@@ -41,3 +41,24 @@ def test_store_detects_new_price_change_and_removed(tmp_path: Path):
         assert [event.event_type for event in events] == ["removed"]
     finally:
         store.close()
+
+
+def test_store_can_skip_removed_detection_for_limited_runs(tmp_path: Path):
+    store = Store(tmp_path / "rentwatch.sqlite3")
+    try:
+        listing = Listing(
+            source="rightmove",
+            property_id="1",
+            url="https://example.test/1",
+            address="One Street",
+            price_text="£1,000 pcm",
+            price_pcm=1000,
+        )
+        assert [event.event_type for event in store.record_search_results("test", [listing])] == ["new"]
+
+        events = store.record_search_results("test", [], mark_removed=False)
+        assert events == []
+        row = next(iter(store.iter_listings()))
+        assert row["status"] == "active"
+    finally:
+        store.close()

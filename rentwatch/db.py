@@ -106,7 +106,11 @@ class Store:
         self.connection.commit()
 
     def record_search_results(
-        self, search_name: str, listings: Iterable[Listing]
+        self,
+        search_name: str,
+        listings: Iterable[Listing],
+        *,
+        mark_removed: bool = True,
     ) -> list[ListingEvent]:
         now = utc_now()
         listings_by_key = {listing.listing_key: listing for listing in listings}
@@ -176,24 +180,25 @@ class Store:
                     ),
                 )
 
-            active_keys = {
-                key for key, row in existing.items() if row["status"] == "active"
-            }
-            removed_keys = active_keys - set(listings_by_key)
-            for listing_key in removed_keys:
-                row = self._listing_row(listing_key)
-                if row is None:
-                    continue
-                listing = listing_from_row(row)
-                self.connection.execute(
-                    """
-                    UPDATE search_listings
-                    SET status = 'removed', last_seen_at = ?
-                    WHERE search_name = ? AND listing_key = ?
-                    """,
-                    (now, search_name, listing_key),
-                )
-                events.append(ListingEvent("removed", search_name, listing))
+            if mark_removed:
+                active_keys = {
+                    key for key, row in existing.items() if row["status"] == "active"
+                }
+                removed_keys = active_keys - set(listings_by_key)
+                for listing_key in removed_keys:
+                    row = self._listing_row(listing_key)
+                    if row is None:
+                        continue
+                    listing = listing_from_row(row)
+                    self.connection.execute(
+                        """
+                        UPDATE search_listings
+                        SET status = 'removed', last_seen_at = ?
+                        WHERE search_name = ? AND listing_key = ?
+                        """,
+                        (now, search_name, listing_key),
+                    )
+                    events.append(ListingEvent("removed", search_name, listing))
 
         return events
 

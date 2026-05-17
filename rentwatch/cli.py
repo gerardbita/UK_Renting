@@ -138,6 +138,16 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Do not check Zoopla browser access before the first poll.",
     )
+    run_parser.add_argument(
+        "--skip-zoopla",
+        action="store_true",
+        help="Ignore Zoopla URLs for this run.",
+    )
+    run_parser.add_argument(
+        "--only-zoopla",
+        action="store_true",
+        help="Only scrape Zoopla URLs for this run.",
+    )
     run_parser.set_defaults(func=cmd_run)
 
     routes_parser = subparsers.add_parser(
@@ -311,6 +321,10 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
+    if args.skip_zoopla and args.only_zoopla:
+        print("Use either --skip-zoopla or --only-zoopla, not both.", file=sys.stderr)
+        return 2
+
     config = load_config(args.config)
     if not config.searches:
         print(f"No searches configured in {args.config}.")
@@ -318,9 +332,11 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 2
 
     scrapers = build_scrapers(config)
-    if not args.skip_zoopla_preflight and not preflight_zoopla_access(
+    enabled_sources = enabled_sources_from_args(args)
+    if not args.skip_zoopla_preflight and "zoopla" in enabled_sources and not preflight_zoopla_access(
         config,
         scrapers,
+        enabled_sources=enabled_sources,
     ):
         return 2
 
@@ -348,6 +364,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 route_limit=args.route_limit,
                 refresh_routes=args.refresh_routes,
                 routing_client=routing_client,
+                enabled_sources=enabled_sources,
             )
             if args.once:
                 return 0
@@ -510,13 +527,14 @@ def run_once(
     route_limit: int | None = None,
     refresh_routes: bool = False,
     routing_client: TflRoutingClient | None = None,
+    enabled_sources: set[str] | None = None,
 ) -> None:
     for search in config.searches:
         print(f"Checking {search.name}...")
         scraped_by_key: dict[str, Listing] = {}
-        urls = resolve_search_urls(search, config)
+        urls = filter_urls_by_source(resolve_search_urls(search, config), enabled_sources)
         if not urls:
-            print(f"Failed {search.name}: no URLs configured.", file=sys.stderr)
+            print(f"Skipped {search.name}: no enabled portal URLs.")
             continue
 
         for url in urls:
@@ -554,7 +572,16 @@ def run_once(
                 route_limit=route_limit,
                 refresh_routes=refresh_routes,
             )
-        events = filter_notifiable_events(search, store.record_search_results(search.name, listings))
+        events = filter_notifiable_events(
+            search,
+            store.record_search_results(
+                search.name,
+                listings,
+                mark_removed=max_pages is None,
+            ),
+        )
+        if max_pages is not None:
+            print("Limited page run: skipped removed-listing detection.")
         change_label = "notifiable changes" if notify else "changes recorded"
         print(
             f"{search.name}: {len(listings)} matching listings, "
@@ -1026,8 +1053,13 @@ def build_scrapers(config: AppConfig) -> dict[str, object]:
     }
 
 
-def preflight_zoopla_access(config: AppConfig, scrapers: dict[str, object]) -> bool:
-    urls = zoopla_urls(config)
+def preflight_zoopla_access(
+    config: AppConfig,
+    scrapers: dict[str, object],
+    *,
+    enabled_sources: set[str] | None = None,
+) -> bool:
+    urls = zoopla_urls(config, enabled_sources=enabled_sources)
     if not urls:
         return True
 
@@ -1047,10 +1079,14 @@ def preflight_zoopla_access(config: AppConfig, scrapers: dict[str, object]) -> b
     return True
 
 
-def zoopla_urls(config: AppConfig) -> list[str]:
+def zoopla_urls(
+    config: AppConfig,
+    *,
+    enabled_sources: set[str] | None = None,
+) -> list[str]:
     urls = []
     for search in config.searches:
-        for url in search.resolved_urls():
+        for url in filter_urls_by_source(search.resolved_urls(), enabled_sources):
             if source_for_url(url) == "zoopla":
                 urls.append(url)
     return list(dict.fromkeys(urls))
@@ -1059,6 +1095,23 @@ def zoopla_urls(config: AppConfig) -> list[str]:
 def first_zoopla_url(config: AppConfig) -> str:
     urls = zoopla_urls(config)
     return urls[0] if urls else ""
+
+
+def enabled_sources_from_args(args: argparse.Namespace) -> set[str]:
+    if getattr(args, "skip_zoopla", False):
+        return {"rightmove"}
+    if getattr(args, "only_zoopla", False):
+        return {"zoopla"}
+    return {"rightmove", "zoopla"}
+
+
+def filter_urls_by_source(
+    urls: list[str],
+    enabled_sources: set[str] | None,
+) -> list[str]:
+    if enabled_sources is None:
+        return urls
+    return [url for url in urls if source_for_url(url) in enabled_sources]
 
 
 

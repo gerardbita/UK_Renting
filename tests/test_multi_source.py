@@ -1,4 +1,10 @@
-from rentwatch.cli import preflight_zoopla_access
+from argparse import Namespace
+
+from rentwatch.cli import (
+    enabled_sources_from_args,
+    filter_urls_by_source,
+    preflight_zoopla_access,
+)
 from rentwatch.config import AppConfig, SearchConfig
 from rentwatch.dedupe import assign_canonical_keys, match_score
 from rentwatch.models import Listing
@@ -133,3 +139,32 @@ def test_zoopla_preflight_runs_before_scraping():
 
     assert preflight_zoopla_access(config, {"zoopla": FakeZooplaScraper()})
     assert calls == ["https://www.zoopla.co.uk/to-rent/property/london/w2/"]
+
+
+def test_skip_zoopla_sources_filters_urls_and_preflight():
+    urls = [
+        "https://www.rightmove.co.uk/property-to-rent/find.html",
+        "https://www.zoopla.co.uk/to-rent/property/london/w2/",
+    ]
+    sources = enabled_sources_from_args(
+        Namespace(skip_zoopla=True, only_zoopla=False)
+    )
+
+    assert sources == {"rightmove"}
+    assert filter_urls_by_source(urls, sources) == [urls[0]]
+
+    config = AppConfig(searches=[SearchConfig(name="combined", urls=urls)])
+    assert preflight_zoopla_access(config, {}, enabled_sources=sources)
+
+
+def test_only_zoopla_sources_filters_urls():
+    urls = [
+        "https://www.rightmove.co.uk/property-to-rent/find.html",
+        "https://www.zoopla.co.uk/to-rent/property/london/w2/",
+    ]
+    sources = enabled_sources_from_args(
+        Namespace(skip_zoopla=False, only_zoopla=True)
+    )
+
+    assert sources == {"zoopla"}
+    assert filter_urls_by_source(urls, sources) == [urls[1]]

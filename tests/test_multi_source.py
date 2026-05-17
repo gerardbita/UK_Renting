@@ -1,4 +1,5 @@
-from rentwatch.config import SearchConfig
+from rentwatch.cli import preflight_zoopla_access
+from rentwatch.config import AppConfig, SearchConfig
 from rentwatch.dedupe import assign_canonical_keys, match_score
 from rentwatch.models import Listing
 from rentwatch.scrapers.zoopla import parse_results_html, with_page
@@ -108,3 +109,27 @@ def test_zoopla_page_number_uses_pn_query_param():
         with_page("https://www.zoopla.co.uk/to-rent/property/london/w2/?q=W2", 3)
         == "https://www.zoopla.co.uk/to-rent/property/london/w2/?q=W2&pn=3"
     )
+
+
+def test_zoopla_preflight_runs_before_scraping():
+    calls = []
+
+    class FakeZooplaScraper:
+        def check_access(self, url):
+            calls.append(url)
+            return 25
+
+    config = AppConfig(
+        searches=[
+            SearchConfig(
+                name="combined",
+                urls=[
+                    "https://www.rightmove.co.uk/property-to-rent/find.html",
+                    "https://www.zoopla.co.uk/to-rent/property/london/w2/",
+                ],
+            )
+        ]
+    )
+
+    assert preflight_zoopla_access(config, {"zoopla": FakeZooplaScraper()})
+    assert calls == ["https://www.zoopla.co.uk/to-rent/property/london/w2/"]

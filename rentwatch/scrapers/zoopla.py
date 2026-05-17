@@ -68,6 +68,22 @@ class ZooplaScraper:
             max_pages=max_pages,
         )
 
+    def check_access(self, url: str) -> int:
+        first_html = self._get_http(url)
+        if first_html is None:
+            if not self.browser_fallback:
+                raise ScraperError(
+                    "Zoopla blocked the HTTP request and browser fallback is disabled."
+                )
+            with zoopla_browser_fetcher(
+                self.timeout_seconds,
+                profile_dir=self.browser_profile_dir,
+            ) as fetch:
+                first_html = fetch(url)
+
+        page = parse_results_html(first_html, page_url=url)
+        return len(page.listings)
+
     def _scrape_pages(
         self,
         url: str,

@@ -68,6 +68,15 @@ python3 -m rentwatch auth-zoopla
 The verification profile is stored locally under `.rentwatch-browser/` and is
 ignored by git.
 
+When `config.json` contains a Zoopla URL, `python3 -m rentwatch run` checks
+Zoopla access before the normal scraping loop. This makes Zoopla verification
+fail fast, before Rightmove scraping, routing, or Telegram notification work
+starts. You can bypass that startup check while debugging with:
+
+```bash
+python3 -m rentwatch run --skip-zoopla-preflight
+```
+
 Optional routing can calculate TfL public-transport and cycling time to a
 specific target. To calculate routes to more than one place, add `targets`:
 

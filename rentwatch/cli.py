@@ -133,6 +133,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Ignore cached routes and calculate travel times again.",
     )
+    run_parser.add_argument(
+        "--skip-zoopla-preflight",
+        action="store_true",
+        help="Do not check Zoopla browser access before the first poll.",
+    )
     run_parser.set_defaults(func=cmd_run)
 
     routes_parser = subparsers.add_parser(
@@ -312,12 +317,18 @@ def cmd_run(args: argparse.Namespace) -> int:
         print("Run `python3 -m rentwatch init-config` or `python3 -m rentwatch add ...`.")
         return 2
 
+    scrapers = build_scrapers(config)
+    if not args.skip_zoopla_preflight and not preflight_zoopla_access(
+        config,
+        scrapers,
+    ):
+        return 2
+
     store = Store(config.resolve_database_path(args.config))
     notifier = TelegramNotifier(
         config.notifications.telegram,
         timeout_seconds=config.http.timeout_seconds,
     )
-    scrapers = build_scrapers(config)
     routing_client = TflRoutingClient(
         timeout_seconds=config.http.timeout_seconds,
         user_agent=config.http.user_agent,
@@ -1015,12 +1026,40 @@ def build_scrapers(config: AppConfig) -> dict[str, object]:
     }
 
 
-def first_zoopla_url(config: AppConfig) -> str:
+def preflight_zoopla_access(config: AppConfig, scrapers: dict[str, object]) -> bool:
+    urls = zoopla_urls(config)
+    if not urls:
+        return True
+
+    scraper = scrapers.get("zoopla")
+    if scraper is None:
+        print("Zoopla URL configured, but no Zoopla scraper is available.", file=sys.stderr)
+        return False
+
+    print(f"Checking Zoopla access before scraping {len(urls)} URL(s)...")
+    for index, url in enumerate(urls, start=1):
+        try:
+            count = scraper.check_access(url)
+        except (ScraperError, ValueError) as exc:
+            print(f"Zoopla preflight failed for URL {index}: {exc}", file=sys.stderr)
+            return False
+        print(f"Zoopla URL {index}: access OK, parsed {count} listing(s) on the first page.")
+    return True
+
+
+def zoopla_urls(config: AppConfig) -> list[str]:
+    urls = []
     for search in config.searches:
         for url in search.resolved_urls():
             if source_for_url(url) == "zoopla":
-                return url
-    return ""
+                urls.append(url)
+    return list(dict.fromkeys(urls))
+
+
+def first_zoopla_url(config: AppConfig) -> str:
+    urls = zoopla_urls(config)
+    return urls[0] if urls else ""
+
 
 
 def source_for_url(url: str) -> str:

@@ -128,6 +128,18 @@ npm run dev
 For GitHub Pages, the workflow builds the app with `/UK_Renting/` as the base
 path and deploys `web/dist`.
 
+To avoid Rightmove's roughly 1,000-result pagination cap, use the split-price
+update script. It rewrites your local `config.json` into five price bands under
+one search name, runs the monitor once without Telegram notifications, exports
+the website JSON, commits the data, and pushes to GitHub:
+
+```bash
+scripts/update_split_price_search.sh
+```
+
+The default bands are `1000-1650`, `1651-1900`, `1901-2100`, `2101-2300`, and
+`2301-2500`. It keeps the search name as `Noemie work and Gerard work`.
+
 If you already have listings in `rentwatch.sqlite3` and only need to fill new
 route targets, use the database-only route backfill. This avoids fetching
 Rightmove before calculating TfL routes:

@@ -475,12 +475,40 @@ a:hover {
 
 .map-popup {
   display: grid;
-  gap: 5px;
+  gap: 8px;
+  min-width: 230px;
   font: 13px/1.35 "Avenir Next", "Trebuchet MS", "Helvetica Neue", sans-serif;
 }
 
 .map-popup span {
   color: #536357;
+}
+
+.map-popup-route {
+  display: grid;
+  gap: 5px;
+  padding-top: 5px;
+  border-top: 1px solid #d9e4dc;
+}
+
+.map-popup-route div {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.map-popup a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 24px;
+  width: fit-content;
+  border: 1px solid #d9e4dc;
+  border-radius: 6px;
+  padding: 3px 7px;
+  background: #fff;
+  color: var(--green);
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .map-legend {

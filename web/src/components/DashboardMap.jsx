@@ -135,19 +135,35 @@ function distanceKm([latA, lonA], [latB, lonB]) {
 
 function renderPopup(listing) {
   const routes = listing.routes
-    .map(
-      (route) =>
-        `<span>${escapeHtml(route.name)}: transit ${formatMinutes(route.transit_minutes)}, cycle ${formatMinutes(route.cycling_minutes)}</span>`,
-    )
+    .map((route, index) => {
+      const routeName = escapeHtml(route.name || `Target ${index + 1}`);
+      return `
+        <div class="map-popup-route">
+          <span>${routeName}: transit ${formatMinutes(route.transit_minutes)}, cycle ${formatMinutes(route.cycling_minutes)}</span>
+          <div>
+            <a href="${directionsUrl(listing, route, "transit")}" target="_blank" rel="noreferrer">Map ${index + 1} transit</a>
+            <a href="${directionsUrl(listing, route, "bicycling")}" target="_blank" rel="noreferrer">Map ${index + 1} cycle</a>
+          </div>
+        </div>
+      `;
+    })
     .join("");
   return `
     <div class="map-popup">
       <strong>${escapeHtml(listing.address || listing.title || "Untitled listing")}</strong>
       <span>${escapeHtml(listing.price_text || "Price unavailable")}</span>
       ${routes}
-      <a href="${listing.url}" target="_blank" rel="noreferrer">Open Rightmove</a>
+      <a href="${escapeAttribute(listing.url)}" target="_blank" rel="noreferrer">Open Rightmove</a>
     </div>
   `;
+}
+
+function directionsUrl(listing, target, mode) {
+  const origin = `${listing.latitude},${listing.longitude}`;
+  const destination = `${target.latitude},${target.longitude}`;
+  return escapeAttribute(
+    `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&travelmode=${mode}`,
+  );
 }
 
 function formatMinutes(value) {
@@ -161,4 +177,8 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#039;");
+}
+
+function escapeAttribute(value) {
+  return escapeHtml(value).replaceAll("`", "&#096;");
 }

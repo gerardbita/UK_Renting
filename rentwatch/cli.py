@@ -548,6 +548,10 @@ class ScrapeProgress:
             return
         self.bar.update(current_page, detail=detail)
 
+    def finish_failed(self) -> None:
+        if self.bar is not None:
+            self.bar.finish(detail="failed; keeping previous data for missing pages")
+
     @staticmethod
     def detail(event: dict[str, object]) -> str:
         current_listings = optional_int(event.get("current_listings")) or 0
@@ -589,6 +593,7 @@ def run_once(
     for search in config.searches:
         print(f"Checking {search.name}...")
         scraped_by_key: dict[str, Listing] = {}
+        scrape_had_failures = False
         urls = filter_urls_by_source(resolve_search_urls(search, config), enabled_sources)
         if not urls:
             print(f"Skipped {search.name}: no enabled portal URLs.")
@@ -603,13 +608,16 @@ def run_once(
                     file=sys.stderr,
                 )
                 continue
+            progress = ScrapeProgress(source)
             try:
                 portal_listings = scraper.scrape(
                     url,
                     max_pages=max_pages,
-                    progress=ScrapeProgress(source),
+                    progress=progress,
                 )
             except (ScraperError, LocationLookupError, ValueError) as exc:
+                progress.finish_failed()
+                scrape_had_failures = True
                 print(f"Failed {search.name} ({source}): {exc}", file=sys.stderr)
                 continue
             scraped_by_key.update(
@@ -646,10 +654,12 @@ def run_once(
             store.record_search_results(
                 search.name,
                 listings,
-                mark_removed=max_pages is None,
+                mark_removed=max_pages is None and not scrape_had_failures,
             ),
         )
-        if max_pages is not None:
+        if scrape_had_failures:
+            print("Partial scrape: skipped removed-listing detection.")
+        elif max_pages is not None:
             print("Limited page run: skipped removed-listing detection.")
         change_label = "notifiable changes" if notify else "changes recorded"
         print(

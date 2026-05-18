@@ -29,10 +29,14 @@ class RightmoveScraper:
         timeout_seconds: int = 20,
         user_agent: str,
         page_delay_seconds: float = 1.0,
+        retry_attempts: int = 3,
+        retry_delay_seconds: float = 2.0,
         session: requests.Session | None = None,
     ):
         self.timeout_seconds = timeout_seconds
         self.page_delay_seconds = page_delay_seconds
+        self.retry_attempts = max(1, retry_attempts)
+        self.retry_delay_seconds = max(0.0, retry_delay_seconds)
         self.session = session or requests.Session()
         self.session.headers.update(
             {
@@ -110,12 +114,22 @@ class RightmoveScraper:
         return list(listings_by_key.values())
 
     def _get(self, url: str) -> str:
-        try:
-            response = self.session.get(url, timeout=self.timeout_seconds)
-            response.raise_for_status()
-        except requests.RequestException as exc:
-            raise ScraperError(f"Failed to fetch Rightmove page: {exc}") from exc
-        return response.text
+        last_error: requests.RequestException | None = None
+        for attempt in range(1, self.retry_attempts + 1):
+            try:
+                response = self.session.get(url, timeout=self.timeout_seconds)
+                response.raise_for_status()
+                return response.text
+            except requests.RequestException as exc:
+                last_error = exc
+                if attempt >= self.retry_attempts:
+                    break
+                if self.retry_delay_seconds > 0:
+                    time.sleep(self.retry_delay_seconds * attempt)
+        raise ScraperError(
+            f"Failed to fetch Rightmove page after {self.retry_attempts} attempt(s): "
+            f"{last_error}"
+        ) from last_error
 
 
 class ParsedPage:

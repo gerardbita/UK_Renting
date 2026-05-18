@@ -19,6 +19,7 @@ from rentwatch.db import Store
 from rentwatch.dedupe import assign_canonical_keys, match_score
 from rentwatch.models import Listing
 from rentwatch.notifications import TelegramNotifier
+from rentwatch.scrapers.base import ScraperError
 from rentwatch.scrapers.zoopla import parse_results_html, with_page
 
 
@@ -218,6 +219,71 @@ def test_limited_page_run_can_be_read_only(tmp_path):
         )
 
         assert list(store.iter_listings()) == []
+    finally:
+        store.close()
+
+
+def test_partial_scrape_failure_does_not_mark_missing_listings_removed(tmp_path):
+    class PartlyFailingRightmoveScraper:
+        def scrape(self, url, max_pages=None, progress=None):
+            if "fail=true" in url:
+                raise ScraperError("timeout")
+            return [
+                Listing(
+                    source="rightmove",
+                    property_id="1",
+                    url="https://www.rightmove.co.uk/properties/1",
+                    address="One Street",
+                    price_text="£1,000 pcm",
+                    price_pcm=1000,
+                )
+            ]
+
+    listing_one = Listing(
+        source="rightmove",
+        property_id="1",
+        url="https://www.rightmove.co.uk/properties/1",
+        price_pcm=1000,
+    )
+    listing_two = Listing(
+        source="rightmove",
+        property_id="2",
+        url="https://www.rightmove.co.uk/properties/2",
+        price_pcm=1500,
+    )
+    config = AppConfig(
+        searches=[
+            SearchConfig(
+                name="combined",
+                urls=[
+                    "https://www.rightmove.co.uk/property-to-rent/find.html",
+                    "https://www.rightmove.co.uk/property-to-rent/find.html?fail=true",
+                ],
+            )
+        ]
+    )
+    store = Store(tmp_path / "rentwatch.sqlite3")
+    try:
+        store.record_search_results("combined", [listing_one, listing_two])
+
+        run_once(
+            config,
+            store,
+            {"rightmove": PartlyFailingRightmoveScraper()},
+            TelegramNotifier(TelegramConfig()),
+            notify=False,
+            show_events=False,
+            max_pages=None,
+            calculate_routes=False,
+            record_results=True,
+        )
+
+        statuses = {
+            row["listing_key"]: row["status"]
+            for row in store.iter_listings()
+        }
+        assert statuses["rightmove:1"] == "active"
+        assert statuses["rightmove:2"] == "active"
     finally:
         store.close()
 

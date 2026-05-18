@@ -145,7 +145,7 @@ For GitHub Pages, the workflow builds the app with `/UK_Renting/` as the base
 path and deploys `web/dist`.
 
 To avoid Rightmove's roughly 1,000-result pagination cap, use the split-price
-update script. It rewrites your local `config.json` into five price bands under
+update script. It rewrites your local `config.json` into seven price bands under
 one search name, runs the monitor once without Telegram notifications, exports
 the website JSON, commits the data, and pushes to GitHub:
 
@@ -153,8 +153,9 @@ the website JSON, commits the data, and pushes to GitHub:
 scripts/update_split_price_search.sh
 ```
 
-The default bands are `1000-1650`, `1651-1900`, `1901-2100`, `2101-2300`, and
-`2301-2500`. It keeps the search name as `Noemie work and Gerard work`.
+The default bands are `1000-1600`, `1601-1750`, `1751-1900`, `1901-2050`,
+`2051-2200`, `2201-2350`, and `2351-2500`. It keeps the search name as
+`Noemie work and Gerard work`.
 
 To run the full update without Zoopla:
 

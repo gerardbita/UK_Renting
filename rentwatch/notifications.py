@@ -18,25 +18,33 @@ class TelegramNotifier:
     timeout_seconds: int = 15
 
     def enabled(self) -> bool:
-        return bool(self.config.enabled and self.config.bot_token and self.config.chat_id)
+        return bool(
+            self.config.enabled
+            and self.config.bot_token
+            and self.config.recipient_chat_ids()
+        )
 
     def send(self, message: str) -> None:
         if not self.enabled():
             return
         url = f"https://api.telegram.org/bot{self.config.bot_token}/sendMessage"
-        response = requests.post(
-            url,
-            json={
-                "chat_id": self.config.chat_id,
-                "text": message,
-                "disable_web_page_preview": False,
-            },
-            timeout=self.timeout_seconds,
-        )
-        if response.status_code >= 400:
-            raise NotificationError(
-                f"Telegram returned HTTP {response.status_code}: {response.text[:200]}"
+        failures = []
+        for chat_id in self.config.recipient_chat_ids():
+            response = requests.post(
+                url,
+                json={
+                    "chat_id": chat_id,
+                    "text": message,
+                    "disable_web_page_preview": False,
+                },
+                timeout=self.timeout_seconds,
             )
+            if response.status_code >= 400:
+                failures.append(
+                    f"{chat_id}: HTTP {response.status_code}: {response.text[:200]}"
+                )
+        if failures:
+            raise NotificationError("Telegram send failed: " + "; ".join(failures))
 
 
 def format_event_message(event: ListingEvent) -> str:

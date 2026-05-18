@@ -194,11 +194,15 @@ Edit `config.json` to add Telegram credentials:
     "telegram": {
       "enabled": true,
       "bot_token": "123456:abc",
-      "chat_id": "123456789"
+      "chat_id": "123456789",
+      "chat_ids": ["987654321"]
     }
   }
 }
 ```
+
+`chat_id` is kept for one main recipient. Add extra recipients to `chat_ids`.
+The bot sends the same alert to every unique chat ID.
 
 ## Run
 
@@ -235,6 +239,17 @@ python3 -m rentwatch run
 ```
 
 By default it waits a random 30-60 minutes between checks.
+
+To run live notifications and publish the website after every pass:
+
+```bash
+scripts/live_notify_and_publish.sh
+```
+
+That script repeatedly runs the split-price search without `--prime`, sends
+Telegram notifications for new/changed listings, exports website data, commits
+changes when there are any, pushes to GitHub, then waits using the configured
+polling delay.
 
 ## Useful Commands
 

@@ -497,10 +497,14 @@ def cmd_test_telegram(args: argparse.Namespace) -> int:
         timeout_seconds=config.http.timeout_seconds,
     )
     if not notifier.enabled():
-        print("Telegram is not enabled or is missing bot_token/chat_id.", file=sys.stderr)
+        print(
+            "Telegram is not enabled or is missing bot_token/chat_id.",
+            file=sys.stderr,
+        )
         return 2
     notifier.send("RentWatch Telegram test message.")
-    print("Sent Telegram test message.")
+    recipients = len(config.notifications.telegram.recipient_chat_ids())
+    print(f"Sent Telegram test message to {recipients} recipient(s).")
     return 0
 
 

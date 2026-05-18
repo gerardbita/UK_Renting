@@ -1,5 +1,8 @@
+from unittest.mock import Mock, patch
+
+from rentwatch.config import TelegramConfig
 from rentwatch.models import Listing, ListingEvent
-from rentwatch.notifications import format_event_message
+from rentwatch.notifications import TelegramNotifier, format_event_message
 
 
 def test_telegram_message_includes_all_route_targets():
@@ -53,3 +56,20 @@ def test_telegram_message_falls_back_to_single_target_routes():
     message = format_event_message(event)
 
     assert "Transit: 26 min, 2.67 km | Cycle: 9 min, 2.68 km" in message
+
+
+def test_telegram_notifier_sends_to_all_recipients():
+    config = TelegramConfig(
+        enabled=True,
+        bot_token="token",
+        chat_id="111",
+        chat_ids=["222", "111"],
+    )
+    notifier = TelegramNotifier(config)
+
+    with patch("rentwatch.notifications.requests.post") as post:
+        post.return_value = Mock(status_code=200, text="ok")
+        notifier.send("hello")
+
+    sent_chat_ids = [call.kwargs["json"]["chat_id"] for call in post.call_args_list]
+    assert sent_chat_ids == ["111", "222"]

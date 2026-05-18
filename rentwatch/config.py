@@ -62,14 +62,21 @@ class TelegramConfig:
     enabled: bool = False
     bot_token: str = ""
     chat_id: str = ""
+    chat_ids: list[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "TelegramConfig":
         data = data or {}
+        chat_ids = [
+            str(item).strip()
+            for item in data.get("chat_ids", [])
+            if str(item).strip()
+        ]
         return cls(
             enabled=bool(data.get("enabled", False)),
             bot_token=str(data.get("bot_token", "")),
             chat_id=str(data.get("chat_id", "")),
+            chat_ids=chat_ids,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -77,7 +84,15 @@ class TelegramConfig:
             "enabled": self.enabled,
             "bot_token": self.bot_token,
             "chat_id": self.chat_id,
+            "chat_ids": self.chat_ids,
         }
+
+    def recipient_chat_ids(self) -> list[str]:
+        recipients = []
+        if self.chat_id.strip():
+            recipients.append(self.chat_id.strip())
+        recipients.extend(chat_id for chat_id in self.chat_ids if chat_id.strip())
+        return list(dict.fromkeys(recipients))
 
 
 @dataclass(slots=True)

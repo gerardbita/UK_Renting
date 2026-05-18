@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 import time
+from shutil import get_terminal_size
 from typing import TextIO
 
 
@@ -52,7 +53,7 @@ class ProgressBar:
 
     def render(self, *, detail: str, final: bool) -> None:
         self.last_render_at = time.monotonic()
-        message = self.message(detail)
+        message = self.message(detail, fit_to_terminal=self.is_tty)
         if final and not self.is_tty and message == self.last_message:
             return
         self.last_message = message
@@ -64,7 +65,7 @@ class ProgressBar:
             self.stream.write(message + "\n")
         self.stream.flush()
 
-    def message(self, detail: str) -> str:
+    def message(self, detail: str, *, fit_to_terminal: bool = False) -> str:
         elapsed = max(0, int(time.monotonic() - self.started_at))
         if self.total > 0:
             ratio = min(1.0, self.current / self.total)
@@ -77,7 +78,20 @@ class ProgressBar:
             count = f"{self.current:,} {self.unit}"
             percent = "  n/a"
         suffix = f" | {detail}" if detail else ""
-        return f"{self.label} [{bar}] {count} {percent} | {elapsed}s{suffix}"
+        message = f"{self.label} [{bar}] {count} {percent} | {elapsed}s{suffix}"
+        if fit_to_terminal:
+            return fit_message_to_terminal(message)
+        return message
+
+
+def fit_message_to_terminal(message: str) -> str:
+    columns = get_terminal_size(fallback=(120, 24)).columns
+    max_length = max(40, columns - 1)
+    if len(message) <= max_length:
+        return message
+    if max_length <= 3:
+        return message[:max_length]
+    return message[: max_length - 3].rstrip() + "..."
 
 
 def compact_detail(value: str, *, limit: int = 72) -> str:

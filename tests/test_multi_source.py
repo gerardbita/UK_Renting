@@ -2,11 +2,19 @@ from argparse import Namespace
 
 from rentwatch.cli import (
     enabled_sources_from_args,
+    enrich_listings_with_routes,
     filter_urls_by_source,
+    preserve_existing_route_data,
     preflight_zoopla_access,
     run_once,
 )
-from rentwatch.config import AppConfig, SearchConfig, TelegramConfig
+from rentwatch.config import (
+    AppConfig,
+    RouteTargetConfig,
+    RoutingConfig,
+    SearchConfig,
+    TelegramConfig,
+)
 from rentwatch.db import Store
 from rentwatch.dedupe import assign_canonical_keys, match_score
 from rentwatch.models import Listing
@@ -210,5 +218,86 @@ def test_limited_page_run_can_be_read_only(tmp_path):
         )
 
         assert list(store.iter_listings()) == []
+    finally:
+        store.close()
+
+
+def test_preserves_existing_route_data_for_scraped_listing():
+    scraped = [
+        Listing(
+            source="rightmove",
+            property_id="1",
+            url="https://www.rightmove.co.uk/properties/1",
+        )
+    ]
+    existing = [
+        Listing(
+            source="rightmove",
+            property_id="1",
+            url="https://www.rightmove.co.uk/properties/1",
+            route_targets=[
+                {
+                    "name": "Work",
+                    "latitude": 51.5,
+                    "longitude": -0.1,
+                    "transit_minutes": 20,
+                    "transit_distance_km": 4.2,
+                    "cycling_minutes": 12,
+                    "cycling_distance_km": 3.1,
+                }
+            ],
+            route_updated_at="2026-05-18T12:00:00+00:00",
+        )
+    ]
+
+    preserve_existing_route_data(scraped, existing)
+
+    assert scraped[0].route_targets == existing[0].route_targets
+    assert scraped[0].route_updated_at == existing[0].route_updated_at
+
+
+def test_complete_route_targets_skip_tfl_calls(tmp_path):
+    class ExplodingRoutingClient:
+        def public_transport(self, *args, **kwargs):
+            raise AssertionError("routing client should not be called")
+
+        def cycling(self, *args, **kwargs):
+            raise AssertionError("routing client should not be called")
+
+    listing = Listing(
+        source="rightmove",
+        property_id="1",
+        url="https://www.rightmove.co.uk/properties/1",
+        latitude=51.51,
+        longitude=-0.12,
+        route_targets=[
+            {
+                "name": "Work",
+                "latitude": 51.5,
+                "longitude": -0.1,
+                "transit_minutes": 20,
+                "transit_distance_km": 4.2,
+                "cycling_minutes": 12,
+                "cycling_distance_km": 3.1,
+            }
+        ],
+        route_updated_at="2026-05-18T12:00:00+00:00",
+    )
+    config = AppConfig(
+        routing=RoutingConfig(
+            enabled=True,
+            targets=[RouteTargetConfig(name="Work", latitude=51.5, longitude=-0.1)],
+        )
+    )
+    store = Store(tmp_path / "rentwatch.sqlite3")
+    try:
+        enrich_listings_with_routes(
+            config,
+            store,
+            [listing],
+            routing_client=ExplodingRoutingClient(),
+            route_limit=None,
+            refresh_routes=False,
+        )
     finally:
         store.close()

@@ -5,6 +5,7 @@ import csv
 import random
 import sys
 import time
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -616,7 +617,9 @@ def run_once(
             continue
 
         scraped = list(scraped_by_key.values())
-        assign_canonical_keys(scraped, store.iter_listing_models())
+        existing_listings = store.iter_listing_models()
+        assign_canonical_keys(scraped, existing_listings)
+        preserve_existing_route_data(scraped, existing_listings)
 
         listings = apply_filters(search, scraped)
         if calculate_routes and record_results:
@@ -656,6 +659,28 @@ def run_once(
             if notify and notifier.enabled():
                 notifier.send(message)
                 store.mark_notified(event, message)
+
+
+def preserve_existing_route_data(
+    scraped: list[Listing], existing_listings: list[Listing]
+) -> None:
+    existing_by_key = {
+        listing.listing_key: listing
+        for listing in existing_listings
+        if listing.route_updated_at or listing.route_targets
+    }
+    for listing in scraped:
+        existing = existing_by_key.get(listing.listing_key)
+        if existing is None:
+            continue
+        listing.transit_minutes = existing.transit_minutes
+        listing.transit_distance_km = existing.transit_distance_km
+        listing.cycling_minutes = existing.cycling_minutes
+        listing.cycling_distance_km = existing.cycling_distance_km
+        listing.route_target_latitude = existing.route_target_latitude
+        listing.route_target_longitude = existing.route_target_longitude
+        listing.route_targets = existing.route_targets
+        listing.route_updated_at = existing.route_updated_at
 
 
 def enrich_listings_with_routes(
@@ -702,9 +727,28 @@ def enrich_listings_with_routes(
         f"for {routing.departure_day} {routing.departure_time}..."
     )
     updated_count = 0
+    skipped_count = 0
+    network_requests = 0
+    route_failures: list[str] = []
+
+    def mark_network_request() -> None:
+        nonlocal network_requests
+        network_requests += 1
+
     for candidate_index, listing in enumerate(candidates, start=1):
+        if not refresh_routes and listing_has_complete_targets(listing, config):
+            skipped_count += 1
+            route_progress.update(
+                candidate_index,
+                detail=compact_detail(
+                    f"cached: {listing.address or listing.title or listing.url}"
+                ),
+            )
+            continue
+
         updated = False
         route_targets = []
+        network_requests_before_listing = network_requests
         for index, target in enumerate(targets):
             target_result = {
                 "name": target.name,
@@ -729,6 +773,8 @@ def enrich_listings_with_routes(
                     route_date=route_date,
                     route_time=route_time,
                     refresh_routes=refresh_routes,
+                    on_network_request=mark_network_request,
+                    on_error=route_failures.append,
                 )
                 if metrics:
                     target_result["transit_minutes"] = metrics.duration_minutes
@@ -752,6 +798,8 @@ def enrich_listings_with_routes(
                     route_date=route_date,
                     route_time=route_time,
                     refresh_routes=refresh_routes,
+                    on_network_request=mark_network_request,
+                    on_error=route_failures.append,
                 )
                 if metrics:
                     target_result["cycling_minutes"] = metrics.duration_minutes
@@ -776,9 +824,19 @@ def enrich_listings_with_routes(
             detail=compact_detail(listing.address or listing.title or listing.url),
         )
 
-        if routing.request_delay_seconds > 0:
+        if (
+            network_requests > network_requests_before_listing
+            and routing.request_delay_seconds > 0
+        ):
             time.sleep(routing.request_delay_seconds)
-    route_progress.finish(detail=f"updated route data for {updated_count:,} listing(s)")
+    route_progress.finish(
+        detail=(
+            f"updated {updated_count:,}; cached {skipped_count:,}; "
+            f"TfL requests {network_requests:,}"
+        )
+    )
+    for failure in route_failures:
+        print(failure, file=sys.stderr)
 
 
 def listing_has_complete_targets(listing: Listing, config: AppConfig) -> bool:
@@ -875,6 +933,8 @@ def get_or_fetch_route(
     route_date: str,
     route_time: str,
     refresh_routes: bool,
+    on_network_request: Callable[[], None] | None = None,
+    on_error: Callable[[str], None] | None = None,
 ) -> RouteMetrics | None:
     if listing.latitude is None or listing.longitude is None:
         return None
@@ -903,6 +963,8 @@ def get_or_fetch_route(
         )
 
     try:
+        if on_network_request is not None:
+            on_network_request()
         if mode == "public_transport":
             metrics = routing_client.public_transport(
                 listing.latitude,
@@ -925,7 +987,11 @@ def get_or_fetch_route(
         else:
             return None
     except RoutingError as exc:
-        print(f"Route failed for {listing.address or listing.url}: {exc}", file=sys.stderr)
+        message = f"Route failed for {listing.address or listing.url}: {exc}"
+        if on_error is not None:
+            on_error(message)
+        else:
+            print(message, file=sys.stderr)
         return None
 
     store.save_cached_route(

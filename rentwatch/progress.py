@@ -57,7 +57,7 @@ class ProgressBar:
             return
         self.last_message = message
         if self.is_tty:
-            self.stream.write("\r" + message)
+            self.stream.write("\r\033[2K" + message)
             if final:
                 self.stream.write("\n")
         else:

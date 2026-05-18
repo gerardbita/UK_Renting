@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import requests
 
 from .config import TelegramConfig
-from .models import ListingEvent
+from .models import Listing, ListingEvent
 
 
 class NotificationError(RuntimeError):
@@ -60,25 +60,79 @@ def format_event_message(event: ListingEvent) -> str:
     if details:
         lines.append(" | ".join(details))
 
-    route_details = []
-    if listing.transit_minutes is not None:
-        distance = (
-            f", {listing.transit_distance_km:g} km"
-            if listing.transit_distance_km is not None
-            else ""
-        )
-        route_details.append(f"Transit: {listing.transit_minutes} min{distance}")
-    if listing.cycling_minutes is not None:
-        distance = (
-            f", {listing.cycling_distance_km:g} km"
-            if listing.cycling_distance_km is not None
-            else ""
-        )
-        route_details.append(f"Cycle: {listing.cycling_minutes} min{distance}")
-    if route_details:
-        lines.append(" | ".join(route_details))
+    lines.extend(format_route_lines(listing))
 
     if listing.address and listing.address != listing.title:
         lines.append(listing.address)
     lines.append(listing.url)
     return "\n".join(lines)
+
+
+def format_route_lines(listing: Listing) -> list[str]:
+    if listing.route_targets:
+        lines = []
+        for target in listing.route_targets:
+            target_name = str(target.get("name") or "Target")
+            route_details = [
+                format_mode_route(
+                    "Transit",
+                    target.get("transit_minutes"),
+                    target.get("transit_distance_km"),
+                ),
+                format_mode_route(
+                    "Cycle",
+                    target.get("cycling_minutes"),
+                    target.get("cycling_distance_km"),
+                ),
+            ]
+            available_details = [detail for detail in route_details if detail]
+            if available_details:
+                lines.append(f"{target_name}: " + " | ".join(available_details))
+        if lines:
+            return lines
+
+    route_details = [
+        format_mode_route(
+            "Transit",
+            listing.transit_minutes,
+            listing.transit_distance_km,
+        ),
+        format_mode_route(
+            "Cycle",
+            listing.cycling_minutes,
+            listing.cycling_distance_km,
+        ),
+    ]
+    available_details = [detail for detail in route_details if detail]
+    return [" | ".join(available_details)] if available_details else []
+
+
+def format_mode_route(
+    label: str,
+    minutes: object,
+    distance_km: object,
+) -> str:
+    minutes_value = optional_int(minutes)
+    if minutes_value is None:
+        return ""
+    distance_value = optional_float(distance_km)
+    distance = f", {distance_value:g} km" if distance_value is not None else ""
+    return f"{label}: {minutes_value} min{distance}"
+
+
+def optional_int(value: object) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def optional_float(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None

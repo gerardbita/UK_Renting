@@ -85,7 +85,7 @@ def main() -> int:
         FROM search_listings sl
         JOIN listings l ON l.listing_key = sl.listing_key
         ORDER BY
-            CASE sl.status WHEN 'active' THEN 0 ELSE 1 END,
+            CASE sl.status WHEN 'active' THEN 0 WHEN 'out_of_search' THEN 1 ELSE 2 END,
             l.transit_minutes IS NULL,
             l.transit_minutes,
             l.price_pcm,
@@ -105,7 +105,7 @@ def main() -> int:
         primary = choose_primary_row(group)
         listing = {field: primary[field] for field in FIELDS if field in primary.keys()}
         listing["canonical_key"] = canonical_key
-        listing["status"] = "active" if any(row["status"] == "active" for row in group) else "removed"
+        listing["status"] = grouped_status(group)
         listing["search_first_seen_at"] = min(row["search_first_seen_at"] for row in group)
         listing["search_last_seen_at"] = max(row["search_last_seen_at"] for row in group)
         listing["route_targets"] = json.loads(primary["route_targets_json"] or "[]")
@@ -123,7 +123,7 @@ def main() -> int:
 
     listings.sort(
         key=lambda listing: (
-            0 if listing["status"] == "active" else 1,
+            status_sort_index(listing["status"]),
             listing.get("transit_minutes") is None,
             listing.get("transit_minutes") or 9999,
             listing.get("price_pcm") or 999999,
@@ -171,6 +171,15 @@ def choose_primary_row(rows: list[sqlite3.Row]) -> sqlite3.Row:
     return sorted(rows, key=primary_sort_key)[0]
 
 
+def grouped_status(rows: list[sqlite3.Row]) -> str:
+    statuses = {row["status"] for row in rows}
+    if "active" in statuses:
+        return "active"
+    if "out_of_search" in statuses:
+        return "out_of_search"
+    return "removed"
+
+
 def primary_sort_key(row: sqlite3.Row) -> tuple:
     route_targets = json.loads(row["route_targets_json"] or "[]")
     route_count = sum(
@@ -179,7 +188,7 @@ def primary_sort_key(row: sqlite3.Row) -> tuple:
         if route.get("transit_minutes") is not None or route.get("cycling_minutes") is not None
     )
     return (
-        0 if row["status"] == "active" else 1,
+        status_sort_index(row["status"]),
         -route_count,
         0 if row["latitude"] is not None and row["longitude"] is not None else 1,
         0 if row["price_pcm"] is not None else 1,
@@ -218,6 +227,11 @@ def source_payload(row: sqlite3.Row) -> dict:
 
 def source_sort_key(row: sqlite3.Row) -> tuple:
     return (source_sort_index(row["source"]), row["listing_key"])
+
+
+def status_sort_index(status: str) -> int:
+    order = {"active": 0, "out_of_search": 1, "removed": 2}
+    return order.get(status, 99)
 
 
 def source_sort_index(source: str) -> int:

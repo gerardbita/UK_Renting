@@ -8,6 +8,7 @@ CONFIG_PATH="${CONFIG_PATH:-$ROOT/config.json}"
 PYTHON_BIN="${PYTHON_BIN:-}"
 RUN_ZOOPLA="${RUN_ZOOPLA:-0}"
 SKIP_ROUTES="${SKIP_ROUTES:-0}"
+SEARCH_CHANGED="${SEARCH_CHANGED:-0}"
 COMMIT_MESSAGE="${COMMIT_MESSAGE:-Update live listings data}"
 
 if [[ -z "$PYTHON_BIN" ]]; then
@@ -44,6 +45,7 @@ while true; do
   SEND_NOTIFICATIONS=1 \
   RUN_ZOOPLA="$RUN_ZOOPLA" \
   SKIP_ROUTES="$SKIP_ROUTES" \
+  SEARCH_CHANGED="$SEARCH_CHANGED" \
   COMMIT_MESSAGE="$COMMIT_MESSAGE" \
     "$ROOT/scripts/update_split_price_search.sh"
   status=$?

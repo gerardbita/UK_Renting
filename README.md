@@ -157,6 +157,12 @@ The default bands are `1000-1600`, `1601-1750`, `1751-1900`, `1901-2050`,
 `2051-2200`, `2201-2350`, and `2351-2500`. It keeps the search name as
 `Noemie work and Gerard work`.
 
+After each successful full run, RentWatch stores a fingerprint of the active
+search definition. If URLs, price limits, or keywords change later, the next
+full run automatically uses search-changed mode: missing known listings are
+marked `out_of_search` instead of `removed`, and known reappearances are not
+sent as new listing alerts.
+
 To run the full update without Zoopla:
 
 ```bash
@@ -265,6 +271,7 @@ python3 -m rentwatch test-telegram
 - new listings
 - returned listings
 - removed listings, if enabled per search
+- out-of-search listings when search criteria changed
 - price changes
 - latitude and longitude, when the portal includes map coordinates
 - TfL public-transport time/distance to your configured target

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
+import json
 import random
 import sys
 import time
@@ -124,6 +126,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--allow-partial-write",
         action="store_true",
         help="Allow --max-pages runs to update the database. Off by default.",
+    )
+    run_parser.add_argument(
+        "--search-changed",
+        action="store_true",
+        help=(
+            "Use when changing radius, prices, or filters. Missing known listings "
+            "become out_of_search and known reappearances do not notify as new."
+        ),
     )
     run_parser.add_argument(
         "--skip-routes",
@@ -373,6 +383,7 @@ def cmd_run(args: argparse.Namespace) -> int:
                 routing_client=routing_client,
                 enabled_sources=enabled_sources,
                 record_results=args.max_pages is None or args.allow_partial_write,
+                search_changed=args.search_changed,
             )
             if args.once:
                 return 0
@@ -589,6 +600,7 @@ def run_once(
     routing_client: TflRoutingClient | None = None,
     enabled_sources: set[str] | None = None,
     record_results: bool = True,
+    search_changed: bool = False,
 ) -> None:
     for search in config.searches:
         print(f"Checking {search.name}...")
@@ -628,6 +640,18 @@ def run_once(
             print(f"{search.name}: no listings scraped.")
             continue
 
+        fingerprint = search_config_fingerprint(search, urls)
+        stored_fingerprint = store.get_search_fingerprint(search.name)
+        automatic_search_changed = (
+            stored_fingerprint is not None and stored_fingerprint != fingerprint
+        )
+        effective_search_changed = search_changed or automatic_search_changed
+        if automatic_search_changed and not search_changed:
+            print(
+                "Search definition changed since the last successful full run; "
+                "using search changed mode."
+            )
+
         scraped = list(scraped_by_key.values())
         existing_listings = store.iter_listing_models()
         assign_canonical_keys(scraped, existing_listings)
@@ -655,12 +679,18 @@ def run_once(
                 search.name,
                 listings,
                 mark_removed=max_pages is None and not scrape_had_failures,
+                missing_status="out_of_search" if effective_search_changed else "removed",
+                suppress_known_new_events=effective_search_changed,
             ),
         )
+        if effective_search_changed:
+            print("Search changed mode: missing listings marked out_of_search.")
         if scrape_had_failures:
             print("Partial scrape: skipped removed-listing detection.")
         elif max_pages is not None:
             print("Limited page run: skipped removed-listing detection.")
+        else:
+            store.set_search_fingerprint(search.name, fingerprint)
         change_label = "notifiable changes" if notify else "changes recorded"
         print(
             f"{search.name}: {len(listings)} matching listings, "
@@ -673,6 +703,18 @@ def run_once(
             if notify and notifier.enabled():
                 notifier.send(message)
                 store.mark_notified(event, message)
+
+
+def search_config_fingerprint(search: SearchConfig, urls: list[str]) -> str:
+    payload = {
+        "urls": sorted(urls),
+        "include_keywords": sorted(search.include_keywords),
+        "exclude_keywords": sorted(search.exclude_keywords),
+        "min_price_pcm": search.min_price_pcm,
+        "max_price_pcm": search.max_price_pcm,
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def preserve_existing_route_data(

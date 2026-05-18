@@ -7,6 +7,7 @@ from rentwatch.cli import (
     preserve_existing_route_data,
     preflight_zoopla_access,
     run_once,
+    search_config_fingerprint,
 )
 from rentwatch.config import (
     AppConfig,
@@ -286,6 +287,82 @@ def test_partial_scrape_failure_does_not_mark_missing_listings_removed(tmp_path)
         assert statuses["rightmove:2"] == "active"
     finally:
         store.close()
+
+
+def test_changed_search_fingerprint_uses_search_changed_mode(tmp_path):
+    class FakeRightmoveScraper:
+        def scrape(self, url, max_pages=None, progress=None):
+            return [
+                Listing(
+                    source="rightmove",
+                    property_id="1",
+                    url="https://www.rightmove.co.uk/properties/1",
+                    price_text="£1,000 pcm",
+                    price_pcm=1000,
+                )
+            ]
+
+    previous_search = SearchConfig(
+        name="combined",
+        urls=["https://www.rightmove.co.uk/property-to-rent/find.html?radius=10"],
+    )
+    current_search = SearchConfig(
+        name="combined",
+        urls=["https://www.rightmove.co.uk/property-to-rent/find.html?radius=5"],
+    )
+    config = AppConfig(searches=[current_search])
+    store = Store(tmp_path / "rentwatch.sqlite3")
+    try:
+        store.record_search_results(
+            "combined",
+            [
+                Listing(
+                    source="rightmove",
+                    property_id="1",
+                    url="https://www.rightmove.co.uk/properties/1",
+                    price_pcm=1000,
+                ),
+                Listing(
+                    source="rightmove",
+                    property_id="2",
+                    url="https://www.rightmove.co.uk/properties/2",
+                    price_pcm=1500,
+                ),
+            ],
+        )
+        store.set_search_fingerprint(
+            "combined",
+            search_config_fingerprint(previous_search, previous_search.resolved_urls()),
+        )
+
+        run_once(
+            config,
+            store,
+            {"rightmove": FakeRightmoveScraper()},
+            TelegramNotifier(TelegramConfig()),
+            notify=False,
+            show_events=False,
+            max_pages=None,
+            calculate_routes=False,
+            record_results=True,
+        )
+
+        statuses = {row["listing_key"]: row["status"] for row in store.iter_listings()}
+        assert statuses["rightmove:1"] == "active"
+        assert statuses["rightmove:2"] == "out_of_search"
+        assert store.get_search_fingerprint("combined") == search_config_fingerprint(
+            current_search, current_search.resolved_urls()
+        )
+    finally:
+        store.close()
+
+
+def test_search_fingerprint_ignores_notification_settings():
+    urls = ["https://www.rightmove.co.uk/property-to-rent/find.html?radius=5"]
+    first = SearchConfig(name="combined", urls=urls, notify_removed=False)
+    second = SearchConfig(name="combined", urls=urls, notify_removed=True)
+
+    assert search_config_fingerprint(first, urls) == search_config_fingerprint(second, urls)
 
 
 def test_preserves_existing_route_data_for_scraped_listing():

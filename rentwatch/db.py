@@ -73,6 +73,12 @@ CREATE TABLE IF NOT EXISTS notification_log (
     message TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS search_state (
+    search_name TEXT PRIMARY KEY,
+    config_fingerprint TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS route_cache (
     route_key TEXT PRIMARY KEY,
     provider TEXT NOT NULL,
@@ -111,7 +117,12 @@ class Store:
         listings: Iterable[Listing],
         *,
         mark_removed: bool = True,
+        missing_status: str = "removed",
+        suppress_known_new_events: bool = False,
     ) -> list[ListingEvent]:
+        if missing_status not in {"removed", "out_of_search"}:
+            raise ValueError(f"Unsupported missing listing status: {missing_status}")
+
         now = utc_now()
         listings_by_key = {listing.listing_key: listing for listing in listings}
         existing = self._search_rows(search_name)
@@ -119,6 +130,7 @@ class Store:
 
         with self.connection:
             for listing in listings_by_key.values():
+                known_related_listing = self._known_related_listing_exists(listing)
                 self._upsert_listing(listing, now)
                 row = existing.get(listing.listing_key)
                 snapshot_json = json.dumps(listing.snapshot(), sort_keys=True)
@@ -142,10 +154,11 @@ class Store:
                         ),
                     )
                     self._insert_price_history(search_name, listing, now)
-                    events.append(ListingEvent("new", search_name, listing))
+                    if not (suppress_known_new_events and known_related_listing):
+                        events.append(ListingEvent("new", search_name, listing))
                     continue
 
-                if row["status"] == "removed":
+                if row["status"] in {"removed", "out_of_search"} and not suppress_known_new_events:
                     events.append(ListingEvent("reactivated", search_name, listing))
 
                 if self._price_changed(row, listing):
@@ -193,12 +206,13 @@ class Store:
                     self.connection.execute(
                         """
                         UPDATE search_listings
-                        SET status = 'removed', last_seen_at = ?
+                        SET status = ?, last_seen_at = ?
                         WHERE search_name = ? AND listing_key = ?
                         """,
-                        (now, search_name, listing_key),
+                        (missing_status, now, search_name, listing_key),
                     )
-                    events.append(ListingEvent("removed", search_name, listing))
+                    if missing_status == "removed":
+                        events.append(ListingEvent("removed", search_name, listing))
 
         return events
 
@@ -301,6 +315,26 @@ class Store:
             )
         )
 
+    def get_search_fingerprint(self, search_name: str) -> str | None:
+        row = self.connection.execute(
+            "SELECT config_fingerprint FROM search_state WHERE search_name = ?",
+            (search_name,),
+        ).fetchone()
+        return row["config_fingerprint"] if row is not None else None
+
+    def set_search_fingerprint(self, search_name: str, fingerprint: str) -> None:
+        with self.connection:
+            self.connection.execute(
+                """
+                INSERT INTO search_state (search_name, config_fingerprint, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(search_name) DO UPDATE SET
+                    config_fingerprint = excluded.config_fingerprint,
+                    updated_at = excluded.updated_at
+                """,
+                (search_name, fingerprint, utc_now()),
+            )
+
     def get_cached_route(self, route_key: str) -> sqlite3.Row | None:
         return self.connection.execute(
             "SELECT * FROM route_cache WHERE route_key = ?",
@@ -357,6 +391,19 @@ class Store:
             "SELECT * FROM listings WHERE listing_key = ?",
             (listing_key,),
         ).fetchone()
+
+    def _known_related_listing_exists(self, listing: Listing) -> bool:
+        if self._listing_row(listing.listing_key) is not None:
+            return True
+        if not listing.canonical_key:
+            return False
+        return (
+            self.connection.execute(
+                "SELECT 1 FROM listings WHERE canonical_key = ? LIMIT 1",
+                (listing.canonical_key,),
+            ).fetchone()
+            is not None
+        )
 
     def _upsert_listing(self, listing: Listing, now: str) -> None:
         current = self._listing_row(listing.listing_key)

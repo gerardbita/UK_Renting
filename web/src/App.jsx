@@ -183,7 +183,7 @@ function filterAndSortListings(listings, filters) {
 
   return listings
     .filter((listing) => {
-      if (filters.activeOnly && listing.status === "removed") return false;
+      if (filters.activeOnly && listing.status !== "active") return false;
       if (query && !searchText(listing).includes(query)) return false;
       if (maxRent !== null && Number(listing.price_pcm || Infinity) > maxRent) return false;
       if (minBeds !== null && Number(listing.bedrooms || 0) < minBeds) return false;

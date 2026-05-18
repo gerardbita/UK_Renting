@@ -1,7 +1,7 @@
 import { median, minDefined } from "../lib/scoring.js";
 
 export default function SummaryPanel({ listings, allListings, targets }) {
-  const active = listings.filter((listing) => listing.status !== "removed");
+  const active = listings.filter((listing) => listing.status === "active");
   const best = [...listings].sort((a, b) => b.score - a.score).slice(0, 4);
   const bestScore = best[0]?.score ?? null;
   const medianRent = median(active.map((listing) => listing.price_pcm));

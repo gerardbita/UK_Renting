@@ -14,6 +14,7 @@ SEND_NOTIFICATIONS="${SEND_NOTIFICATIONS:-0}"
 AUTH_ZOOPLA="${AUTH_ZOOPLA:-0}"
 SKIP_ROUTES="${SKIP_ROUTES:-0}"
 RUN_ZOOPLA="${RUN_ZOOPLA:-0}"
+SEARCH_CHANGED="${SEARCH_CHANGED:-0}"
 
 if [[ -z "$PYTHON_BIN" ]]; then
   if [[ -x "$ROOT/.venv/bin/python" ]]; then
@@ -206,6 +207,9 @@ if [[ "$SEND_NOTIFICATIONS" == "1" ]]; then
 fi
 if [[ "$SKIP_ROUTES" == "1" ]]; then
   run_args+=(--skip-routes)
+fi
+if [[ "$SEARCH_CHANGED" == "1" ]]; then
+  run_args+=(--search-changed)
 fi
 case "$RUN_ZOOPLA" in
   0|false|no)

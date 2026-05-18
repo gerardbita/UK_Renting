@@ -62,3 +62,49 @@ def test_store_can_skip_removed_detection_for_limited_runs(tmp_path: Path):
         assert row["status"] == "active"
     finally:
         store.close()
+
+
+def test_store_marks_missing_listings_out_of_search_for_search_changes(tmp_path: Path):
+    store = Store(tmp_path / "rentwatch.sqlite3")
+    try:
+        first = Listing(
+            source="rightmove",
+            property_id="1",
+            url="https://example.test/1",
+            price_text="£1,000 pcm",
+            price_pcm=1000,
+        )
+        second = Listing(
+            source="rightmove",
+            property_id="2",
+            url="https://example.test/2",
+            price_text="£1,500 pcm",
+            price_pcm=1500,
+        )
+        store.record_search_results("test", [first, second])
+
+        events = store.record_search_results(
+            "test",
+            [first],
+            missing_status="out_of_search",
+            suppress_known_new_events=True,
+        )
+
+        assert events == []
+        statuses = {row["listing_key"]: row["status"] for row in store.iter_listings()}
+        assert statuses["rightmove:1"] == "active"
+        assert statuses["rightmove:2"] == "out_of_search"
+    finally:
+        store.close()
+
+
+def test_store_fingerprint_round_trip(tmp_path: Path):
+    store = Store(tmp_path / "rentwatch.sqlite3")
+    try:
+        assert store.get_search_fingerprint("test") is None
+        store.set_search_fingerprint("test", "abc")
+        assert store.get_search_fingerprint("test") == "abc"
+        store.set_search_fingerprint("test", "def")
+        assert store.get_search_fingerprint("test") == "def"
+    finally:
+        store.close()

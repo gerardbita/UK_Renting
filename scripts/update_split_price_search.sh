@@ -6,7 +6,8 @@ cd "$ROOT"
 
 CONFIG_PATH="${CONFIG_PATH:-$ROOT/config.json}"
 SEARCH_NAME="${SEARCH_NAME:-Noemie work and Gerard work}"
-PRICE_BANDS="${PRICE_BANDS:-1000:1600,1601:1750,1751:1900,1901:2050,2051:2200,2201:2350,2351:2500}"
+PRICE_BANDS="${PRICE_BANDS:-1000:1600,1601:1750,1751:1900,1901:2050,2051:2200}"
+SEARCH_RADIUS="${SEARCH_RADIUS:-6}"
 COMMIT_MESSAGE="${COMMIT_MESSAGE:-Update split price search data}"
 PYTHON_BIN="${PYTHON_BIN:-}"
 DRY_RUN="${DRY_RUN:-0}"
@@ -29,7 +30,7 @@ if [[ ! -f "$CONFIG_PATH" ]]; then
   exit 2
 fi
 
-"$PYTHON_BIN" - "$CONFIG_PATH" "$SEARCH_NAME" "$PRICE_BANDS" <<'PY'
+"$PYTHON_BIN" - "$CONFIG_PATH" "$SEARCH_NAME" "$PRICE_BANDS" "$SEARCH_RADIUS" <<'PY'
 from __future__ import annotations
 
 import json
@@ -46,18 +47,28 @@ price_bands = [
     for band in sys.argv[3].split(",")
     if band.strip()
 ]
+search_radius = sys.argv[4].strip()
 
 
 def first_url(urls: list[str], host_part: str) -> str:
     return next((url for url in urls if host_part in urlparse(url).netloc.lower()), "")
 
 
-def with_query_values(url: str, values: dict[str, int]) -> str:
+def with_query_values(url: str, values: dict[str, int | str]) -> str:
     parsed = urlparse(url)
     query = dict(parse_qsl(parsed.query, keep_blank_values=True))
     for key, value in values.items():
         query[key] = str(value)
     return urlunparse(parsed._replace(query=urlencode(query)))
+
+
+def radius_query_values(radius: str) -> tuple[dict[str, str], dict[str, str]]:
+    if not radius:
+        return {}, {}
+    value = float(radius)
+    rightmove_radius = f"{value:.1f}"
+    zoopla_radius = f"{value:g}"
+    return {"radius": rightmove_radius}, {"radius": zoopla_radius}
 
 
 def normalize_search_names(db_path: Path, target_name: str) -> None:
@@ -146,11 +157,22 @@ if not rightmove_base and not zoopla_base:
     raise SystemExit("Could not find a Rightmove or Zoopla URL in config.json.")
 
 split_urls = []
+rightmove_radius, zoopla_radius = radius_query_values(search_radius)
 for low, high in price_bands:
     if rightmove_base:
-        split_urls.append(with_query_values(rightmove_base, {"minPrice": low, "maxPrice": high, "index": 0}))
+        split_urls.append(
+            with_query_values(
+                rightmove_base,
+                {"minPrice": low, "maxPrice": high, "index": 0, **rightmove_radius},
+            )
+        )
     if zoopla_base:
-        split_urls.append(with_query_values(zoopla_base, {"price_min": low, "price_max": high}))
+        split_urls.append(
+            with_query_values(
+                zoopla_base,
+                {"price_min": low, "price_max": high, **zoopla_radius},
+            )
+        )
 
 new_search = {
     "name": search_name,
@@ -185,7 +207,8 @@ for url in split_urls:
     query = dict(parse_qsl(urlparse(url).query, keep_blank_values=True))
     low = query.get("minPrice") or query.get("price_min")
     high = query.get("maxPrice") or query.get("price_max")
-    print(f"- {host}: GBP {low}-{high}")
+    radius = query.get("radius") or "unchanged"
+    print(f"- {host}: GBP {low}-{high}; radius {radius} miles")
 PY
 
 echo

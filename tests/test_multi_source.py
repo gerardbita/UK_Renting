@@ -14,7 +14,7 @@ from rentwatch.config import (
 from rentwatch.db import Store
 from rentwatch.dedupe import assign_canonical_keys, match_score
 from rentwatch.models import Listing
-from rentwatch.notifications import TelegramNotifier
+from rentwatch.notifications import NotificationError, TelegramNotifier
 from rentwatch.scrapers.base import ScraperError
 
 
@@ -200,6 +200,55 @@ def test_partial_scrape_failure_does_not_mark_missing_listings_removed(tmp_path)
         }
         assert statuses["rightmove:1"] == "active"
         assert statuses["rightmove:2"] == "active"
+    finally:
+        store.close()
+
+
+def test_failed_telegram_send_does_not_crash_run(tmp_path):
+    class FakeRightmoveScraper:
+        def scrape(self, url, max_pages=None, progress=None):
+            return [
+                Listing(
+                    source="rightmove",
+                    property_id="1",
+                    url="https://www.rightmove.co.uk/properties/1",
+                    price_text="£1,000 pcm",
+                    price_pcm=1000,
+                )
+            ]
+
+    class BlockedNotifier:
+        def enabled(self):
+            return True
+
+        def send(self, message):
+            raise NotificationError("Connection reset by peer")
+
+    config = AppConfig(
+        searches=[
+            SearchConfig(
+                name="combined",
+                urls=["https://www.rightmove.co.uk/property-to-rent/find.html"],
+            )
+        ]
+    )
+    store = Store(tmp_path / "rentwatch.sqlite3")
+    try:
+        # Must not raise even though every Telegram send fails.
+        run_once(
+            config,
+            store,
+            {"rightmove": FakeRightmoveScraper()},
+            BlockedNotifier(),
+            notify=True,
+            show_events=False,
+            max_pages=None,
+            calculate_routes=False,
+            record_results=True,
+        )
+        # Listing is still saved so the dashboard keeps working.
+        statuses = {row["listing_key"]: row["status"] for row in store.iter_listings()}
+        assert statuses["rightmove:1"] == "active"
     finally:
         store.close()
 

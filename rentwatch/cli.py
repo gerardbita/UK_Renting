@@ -13,6 +13,8 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
 
+import requests
+
 from .config import (
     DEFAULT_CONFIG_PATH,
     AppConfig,
@@ -26,6 +28,7 @@ from .db import Store, listing_from_row
 from .dedupe import assign_canonical_keys
 from .models import Listing, ListingEvent
 from .notifications import (
+    NotificationError,
     TelegramNotifier,
     format_digest,
     format_event_message,
@@ -680,16 +683,26 @@ def run_once(
         if not (notify and notifier.enabled()) or not events:
             continue
 
-        if config.notifications.telegram.digest:
-            digest = format_digest(events)
-            notifier.send(digest)
-            for event in events:
-                store.mark_notified(event, digest)
-        else:
-            for event in events:
-                message = format_event_message(event)
-                notifier.send(message)
-                store.mark_notified(event, message)
+        # Notifications are best-effort: a Telegram outage or a network that
+        # blocks api.telegram.org must not crash the scrape/route/publish run.
+        # Unsent events are simply left unmarked and retried on the next poll.
+        try:
+            if config.notifications.telegram.digest:
+                digest = format_digest(events)
+                notifier.send(digest)
+                for event in events:
+                    store.mark_notified(event, digest)
+            else:
+                for event in events:
+                    message = format_event_message(event)
+                    notifier.send(message)
+                    store.mark_notified(event, message)
+        except (NotificationError, requests.RequestException, OSError) as exc:
+            print(
+                f"Telegram notification failed: {exc}. Listings are saved and the "
+                "website will still update; unsent alerts retry next poll.",
+                file=sys.stderr,
+            )
 
 
 def search_config_fingerprint(search: SearchConfig, urls: list[str]) -> str:

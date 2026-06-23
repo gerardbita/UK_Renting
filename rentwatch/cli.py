@@ -27,6 +27,7 @@ from .dedupe import assign_canonical_keys
 from .models import Listing, ListingEvent
 from .notifications import (
     TelegramNotifier,
+    format_digest,
     format_event_message,
     listing_matches_route_filters,
 )
@@ -35,7 +36,6 @@ from .rightmove_location import LocationLookupError, lookup_rightmove_locations
 from .rightmove_url import RightmoveUrlOptions, build_rightmove_url
 from .routing import RouteMetrics, RoutingError, TflRoutingClient, route_key
 from .scrapers.rightmove import RightmoveScraper, ScraperError
-from .scrapers.zoopla import ZooplaScraper, open_zoopla_browser_profile
 from .db import utc_now
 
 
@@ -155,21 +155,6 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Ignore cached routes and calculate travel times again.",
     )
-    run_parser.add_argument(
-        "--skip-zoopla-preflight",
-        action="store_true",
-        help="Do not check Zoopla browser access before the first poll.",
-    )
-    run_parser.add_argument(
-        "--skip-zoopla",
-        action="store_true",
-        help="Ignore Zoopla URLs for this run.",
-    )
-    run_parser.add_argument(
-        "--only-zoopla",
-        action="store_true",
-        help="Only scrape Zoopla URLs for this run.",
-    )
     run_parser.set_defaults(func=cmd_run)
 
     routes_parser = subparsers.add_parser(
@@ -201,17 +186,6 @@ def build_parser() -> argparse.ArgumentParser:
         "test-telegram", help="Send a test Telegram message."
     )
     telegram_parser.set_defaults(func=cmd_test_telegram)
-
-    zoopla_auth_parser = subparsers.add_parser(
-        "auth-zoopla",
-        help="Open Zoopla in the RentWatch browser profile to complete verification.",
-    )
-    zoopla_auth_parser.add_argument(
-        "url",
-        nargs="?",
-        help="Zoopla URL to open. Defaults to the first Zoopla URL in config.json.",
-    )
-    zoopla_auth_parser.set_defaults(func=cmd_auth_zoopla)
     return parser
 
 
@@ -343,10 +317,6 @@ def cmd_list(args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    if args.skip_zoopla and args.only_zoopla:
-        print("Use either --skip-zoopla or --only-zoopla, not both.", file=sys.stderr)
-        return 2
-
     config = load_config(args.config)
     if not config.searches:
         print(f"No searches configured in {args.config}.")
@@ -354,13 +324,6 @@ def cmd_run(args: argparse.Namespace) -> int:
         return 2
 
     scrapers = build_scrapers(config)
-    enabled_sources = enabled_sources_from_args(args)
-    if not args.skip_zoopla_preflight and "zoopla" in enabled_sources and not preflight_zoopla_access(
-        config,
-        scrapers,
-        enabled_sources=enabled_sources,
-    ):
-        return 2
 
     store = Store(config.resolve_database_path(args.config))
     notifier = TelegramNotifier(
@@ -386,7 +349,6 @@ def cmd_run(args: argparse.Namespace) -> int:
                 route_limit=args.route_limit,
                 refresh_routes=args.refresh_routes,
                 routing_client=routing_client,
-                enabled_sources=enabled_sources,
                 record_results=args.max_pages is None or args.allow_partial_write,
                 search_changed=args.search_changed,
             )
@@ -524,24 +486,6 @@ def cmd_test_telegram(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_auth_zoopla(args: argparse.Namespace) -> int:
-    config = load_config(args.config)
-    url = args.url or first_zoopla_url(config)
-    if not url:
-        print("No Zoopla URL found in config.json.", file=sys.stderr)
-        return 2
-    try:
-        open_zoopla_browser_profile(
-            url,
-            profile_dir=Path(".rentwatch-browser") / "zoopla",
-            timeout_seconds=config.http.timeout_seconds,
-        )
-    except ScraperError as exc:
-        print(str(exc), file=sys.stderr)
-        return 2
-    return 0
-
-
 class ScrapeProgress:
     def __init__(self, source: str):
         self.source = source
@@ -603,7 +547,6 @@ def run_once(
     route_limit: int | None = None,
     refresh_routes: bool = False,
     routing_client: TflRoutingClient | None = None,
-    enabled_sources: set[str] | None = None,
     record_results: bool = True,
     search_changed: bool = False,
 ) -> None:
@@ -611,9 +554,9 @@ def run_once(
         print(f"Checking {search.name}...")
         scraped_by_key: dict[str, Listing] = {}
         scrape_had_failures = False
-        urls = filter_urls_by_source(resolve_search_urls(search, config), enabled_sources)
+        urls = resolve_search_urls(search, config)
         if not urls:
-            print(f"Skipped {search.name}: no enabled portal URLs.")
+            print(f"Skipped {search.name}: no portal URLs.")
             continue
 
         for url in urls:
@@ -621,7 +564,8 @@ def run_once(
             scraper = scrapers.get(source)
             if scraper is None:
                 print(
-                    f"Failed {search.name}: unsupported property portal URL: {url}",
+                    f"Skipped {search.name}: unsupported portal URL "
+                    f"(only Rightmove is supported): {url}",
                     file=sys.stderr,
                 )
                 continue
@@ -644,6 +588,26 @@ def run_once(
         if not scraped_by_key:
             print(f"{search.name}: no listings scraped.")
             continue
+
+        # Sanity guard: a sudden collapse in scraped volume on a full run almost
+        # always means a markup change or a soft block, not that the market
+        # emptied out. Treat it as a partial scrape so removed-detection does not
+        # cascade thousands of false "removed" events.
+        previously_active = store.active_listing_count(search.name)
+        scraped_count = len(scraped_by_key)
+        if (
+            max_pages is None
+            and not scrape_had_failures
+            and previously_active >= 30
+            and scraped_count < 0.4 * previously_active
+        ):
+            scrape_had_failures = True
+            print(
+                f"Sanity guard: only scraped {scraped_count} listings vs "
+                f"{previously_active} previously active for {search.name}; "
+                "treating as a partial scrape and skipping removed-listing detection.",
+                file=sys.stderr,
+            )
 
         fingerprint = search_config_fingerprint(search, urls)
         stored_fingerprint = store.get_search_fingerprint(search.name)
@@ -709,11 +673,21 @@ def run_once(
             f"{search.name}: {len(listings)} matching listings, "
             f"{len(events)} {change_label}."
         )
-        for event in events:
-            message = format_event_message(event)
-            if show_events:
+        if show_events:
+            for event in events:
                 print_event(event)
-            if notify and notifier.enabled():
+
+        if not (notify and notifier.enabled()) or not events:
+            continue
+
+        if config.notifications.telegram.digest:
+            digest = format_digest(events)
+            notifier.send(digest)
+            for event in events:
+                store.mark_notified(event, digest)
+        else:
+            for event in events:
+                message = format_event_message(event)
                 notifier.send(message)
                 store.mark_notified(event, message)
 
@@ -1268,83 +1242,13 @@ def build_scrapers(config: AppConfig) -> dict[str, object]:
         "user_agent": config.http.user_agent,
         "page_delay_seconds": config.polling.page_delay_seconds,
     }
-    return {
-        "rightmove": RightmoveScraper(**kwargs),
-        "zoopla": ZooplaScraper(
-            **kwargs,
-            browser_profile_dir=Path(".rentwatch-browser") / "zoopla",
-        ),
-    }
-
-
-def preflight_zoopla_access(
-    config: AppConfig,
-    scrapers: dict[str, object],
-    *,
-    enabled_sources: set[str] | None = None,
-) -> bool:
-    urls = zoopla_urls(config, enabled_sources=enabled_sources)
-    if not urls:
-        return True
-
-    scraper = scrapers.get("zoopla")
-    if scraper is None:
-        print("Zoopla URL configured, but no Zoopla scraper is available.", file=sys.stderr)
-        return False
-
-    print(f"Checking Zoopla access before scraping {len(urls)} URL(s)...")
-    for index, url in enumerate(urls, start=1):
-        try:
-            count = scraper.check_access(url)
-        except (ScraperError, ValueError) as exc:
-            print(f"Zoopla preflight failed for URL {index}: {exc}", file=sys.stderr)
-            return False
-        print(f"Zoopla URL {index}: access OK, parsed {count} listing(s) on the first page.")
-    return True
-
-
-def zoopla_urls(
-    config: AppConfig,
-    *,
-    enabled_sources: set[str] | None = None,
-) -> list[str]:
-    urls = []
-    for search in config.searches:
-        for url in filter_urls_by_source(search.resolved_urls(), enabled_sources):
-            if source_for_url(url) == "zoopla":
-                urls.append(url)
-    return list(dict.fromkeys(urls))
-
-
-def first_zoopla_url(config: AppConfig) -> str:
-    urls = zoopla_urls(config)
-    return urls[0] if urls else ""
-
-
-def enabled_sources_from_args(args: argparse.Namespace) -> set[str]:
-    if getattr(args, "skip_zoopla", False):
-        return {"rightmove"}
-    if getattr(args, "only_zoopla", False):
-        return {"zoopla"}
-    return {"rightmove", "zoopla"}
-
-
-def filter_urls_by_source(
-    urls: list[str],
-    enabled_sources: set[str] | None,
-) -> list[str]:
-    if enabled_sources is None:
-        return urls
-    return [url for url in urls if source_for_url(url) in enabled_sources]
-
+    return {"rightmove": RightmoveScraper(**kwargs)}
 
 
 def source_for_url(url: str) -> str:
     host = urlparse(url).netloc.lower()
     if "rightmove.co.uk" in host:
         return "rightmove"
-    if "zoopla.co.uk" in host:
-        return "zoopla"
     return ""
 
 

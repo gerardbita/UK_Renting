@@ -196,6 +196,7 @@ def listing_from_card(
     property_id = extract_property_id(url, card)
     property_data = (property_data_by_id or {}).get(property_id, {})
     latitude, longitude = extract_coordinates(property_data)
+    image_urls, main_image = extract_image_urls(property_data)
 
     price_text = extract_price_text(card)
     address = compact_text(
@@ -246,10 +247,31 @@ def listing_from_card(
     )
     agent = extract_agent(card)
 
+    card_text = compact_text(card.get_text(" ", strip=True))
+
+    # Authoritative structured fields from the embedded search payload.
+    if not summary and property_data.get("summary"):
+        summary = compact_text(str(property_data["summary"]))
+    if not address and property_data.get("displayAddress"):
+        address = compact_text(str(property_data["displayAddress"]))
+    if not property_type and property_data.get("propertySubType"):
+        property_type = compact_text(str(property_data["propertySubType"]))
+    if not title and property_data.get("propertyTypeFullDescription"):
+        title = compact_text(str(property_data["propertyTypeFullDescription"]))
+    if bedrooms is None and isinstance(property_data.get("bedrooms"), int):
+        bedrooms = property_data["bedrooms"]
+    bathrooms = property_data["bathrooms"] if isinstance(property_data.get("bathrooms"), int) else None
+    key_features = [
+        compact_text(str(feature))
+        for feature in (property_data.get("keyFeatures") or [])
+        if str(feature).strip()
+    ]
+
     raw = {
         "page_url": page_url,
-        "card_text": compact_text(card.get_text(" ", strip=True)),
+        "card_text": card_text,
         "has_embedded_property_data": bool(property_data),
+        "image_urls": image_urls,
     }
     return Listing(
         source="rightmove",
@@ -264,6 +286,19 @@ def listing_from_card(
         agent=agent,
         summary=summary,
         title=title,
+        image_urls=image_urls,
+        main_image=main_image,
+        bathrooms=bathrooms,
+        property_subtype=property_type,
+        size_sqft=extract_size_sqft(property_data),
+        let_agreed=extract_let_agreed(property_data, card_text),
+        first_listed_date=str(property_data.get("firstVisibleDate") or ""),
+        added_or_reduced=compact_text(str(property_data.get("addedOrReduced") or "")),
+        update_reason=str(
+            (property_data.get("listingUpdate") or {}).get("listingUpdateReason") or ""
+        ),
+        available_date=str(property_data.get("letAvailableDate") or ""),
+        key_features=key_features,
         raw=raw,
     )
 
@@ -337,6 +372,50 @@ def extract_coordinates(property_data: dict[str, Any]) -> tuple[float | None, fl
         return None, None
     return _optional_float(location.get("latitude")), _optional_float(
         location.get("longitude")
+    )
+
+
+def extract_image_urls(property_data: dict[str, Any]) -> tuple[list[str], str]:
+    images_block = property_data.get("propertyImages", {})
+    if not isinstance(images_block, dict):
+        return [], ""
+    urls: list[str] = []
+    for image in images_block.get("images", []) or []:
+        if isinstance(image, dict):
+            src = image.get("srcUrl") or image.get("url")
+            if src:
+                urls.append(str(src))
+    main_image = str(images_block.get("mainImageSrc") or "")
+    if not main_image and urls:
+        main_image = urls[0]
+    # De-duplicate while preserving order.
+    return list(dict.fromkeys(urls)), main_image
+
+
+def extract_size_sqft(property_data: dict[str, Any]) -> int | None:
+    display_size = str(property_data.get("displaySize") or "")
+    match = re.search(r"([0-9][0-9,]*)\s*sq\s*ft", display_size, flags=re.I)
+    if match:
+        return int(match.group(1).replace(",", ""))
+    match = re.search(r"([0-9][0-9,]*(?:\.\d+)?)\s*sq\s*m", display_size, flags=re.I)
+    if match:
+        return round(float(match.group(1).replace(",", "")) * 10.7639)
+    return None
+
+
+def extract_let_agreed(property_data: dict[str, Any], card_text: str) -> bool:
+    signals = [
+        str(property_data.get("displayStatus") or ""),
+        str(property_data.get("propertyTypeFullDescription") or ""),
+    ]
+    lozenge = property_data.get("lozengeModel")
+    if isinstance(lozenge, dict):
+        signals.append(str(lozenge.get("matchingLozenges") or lozenge))
+    signals.append(card_text)
+    haystack = " ".join(signals).lower()
+    return any(
+        token in haystack
+        for token in ("let agreed", "under offer", "sstc", "tenancy agreed")
     )
 
 

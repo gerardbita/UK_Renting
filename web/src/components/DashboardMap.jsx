@@ -1,179 +1,192 @@
 import { useEffect, useRef } from "react";
 import L from "leaflet";
+import { scoreColor } from "./Charts.jsx";
+import { pcm } from "../lib/format.js";
 
-export default function DashboardMap({ listings, targets }) {
+const CELL_PX = 56;
+
+export default function DashboardMap({ listings, targets, activeId, onOpen, onHover, fullHeight }) {
   const mapRef = useRef(null);
-  const layerRef = useRef(null);
+  const markerLayer = useRef(null);
+  const targetLayer = useRef(null);
+  const dataRef = useRef({ listings, activeId });
+  const markerIndex = useRef(new Map());
+
+  dataRef.current = { listings, activeId };
 
   useEffect(() => {
-    if (mapRef.current) return;
+    if (mapRef.current) return undefined;
     const map = L.map("rental-map", {
       zoomControl: false,
-      scrollWheelZoom: false,
-      zoomSnap: 0.25,
-      zoomDelta: 0.5,
+      scrollWheelZoom: true,
+      preferCanvas: true,
+      zoomSnap: 0.5,
     }).setView([51.5074, -0.1278], 11);
     L.control.zoom({ position: "bottomright" }).addTo(map);
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
       maxZoom: 19,
-      attribution: "&copy; OpenStreetMap",
+      attribution: "&copy; OpenStreetMap &copy; CARTO",
     }).addTo(map);
-    layerRef.current = L.layerGroup().addTo(map);
+    targetLayer.current = L.layerGroup().addTo(map);
+    markerLayer.current = L.layerGroup().addTo(map);
     mapRef.current = map;
+
+    const rerender = () => renderMarkers();
+    map.on("zoomend moveend", rerender);
+    return () => {
+      map.off("zoomend moveend", rerender);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Targets + initial fit.
   useEffect(() => {
     const map = mapRef.current;
-    const layer = layerRef.current;
+    const layer = targetLayer.current;
     if (!map || !layer) return;
-
     layer.clearLayers();
-    const bounds = [];
-    const focusBounds = [];
-    const focusCenter = targetCenter(targets);
-
-    for (const target of targets) {
+    const points = [];
+    targets.forEach((target, index) => {
       const marker = L.marker([target.latitude, target.longitude], {
         icon: L.divIcon({
-          className: "target-marker",
-          html: `<span>${escapeHtml(target.name)}</span>`,
-          iconSize: [150, 32],
-          iconAnchor: [12, 16],
+          className: "target-pin",
+          html: `<span>${index + 1}</span><b>${escapeHtml(firstWord(target.name))}</b>`,
+          iconSize: [120, 26],
+          iconAnchor: [13, 13],
         }),
+        zIndexOffset: 1000,
       }).addTo(layer);
-      marker.bindPopup(`<strong>${escapeHtml(target.name)}</strong><br>${target.latitude.toFixed(5)}, ${target.longitude.toFixed(5)}`);
-      bounds.push([target.latitude, target.longitude]);
-      focusBounds.push([target.latitude, target.longitude]);
-    }
-
+      marker.bindPopup(`<strong>${escapeHtml(target.name)}</strong>`);
+      points.push([target.latitude, target.longitude]);
+    });
     if (targets.length >= 2) {
-      L.polyline(
-        targets.map((target) => [target.latitude, target.longitude]),
-        {
-          color: "#1976d2",
-          dashArray: "8 8",
-          weight: 3,
-          opacity: 0.75,
-        },
-      ).addTo(layer);
+      L.polyline(points, { color: "#60a5fa", weight: 2, dashArray: "6 7", opacity: 0.7 }).addTo(layer);
+    }
+    const center = points.length
+      ? [points.reduce((s, p) => s + p[0], 0) / points.length, points.reduce((s, p) => s + p[1], 0) / points.length]
+      : [51.5074, -0.1278];
+    map.setView(center, map.getSize().x < 700 ? 10.5 : 11.5);
+  }, [targets]);
+
+  // Re-render markers when listings change.
+  useEffect(() => {
+    renderMarkers();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listings]);
+
+  // Highlight + pan to the active listing without a full rebuild.
+  useEffect(() => {
+    renderMarkers();
+    const map = mapRef.current;
+    if (!map || !activeId) return;
+    const target = listings.find((listing) => listing.id === activeId);
+    if (target && Number.isFinite(Number(target.latitude))) {
+      map.panTo([Number(target.latitude), Number(target.longitude)], { animate: true, duration: 0.4 });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeId]);
+
+  function renderMarkers() {
+    const map = mapRef.current;
+    const layer = markerLayer.current;
+    if (!map || !layer) return;
+    layer.clearLayers();
+    markerIndex.current = new Map();
+
+    const { listings: items, activeId: active } = dataRef.current;
+    const located = items.filter(
+      (item) => Number.isFinite(Number(item.latitude)) && Number.isFinite(Number(item.longitude)),
+    );
+
+    // Grid cluster in screen space at the current zoom.
+    const cells = new Map();
+    for (const item of located) {
+      const point = map.latLngToContainerPoint([Number(item.latitude), Number(item.longitude)]);
+      const key = `${Math.floor(point.x / CELL_PX)}:${Math.floor(point.y / CELL_PX)}`;
+      if (!cells.has(key)) cells.set(key, []);
+      cells.get(key).push(item);
     }
 
-    for (const listing of listings.slice(0, 600)) {
-      if (!Number.isFinite(Number(listing.latitude)) || !Number.isFinite(Number(listing.longitude))) continue;
-      const marker = L.circleMarker([Number(listing.latitude), Number(listing.longitude)], {
-        radius: scoreRadius(listing.score),
-        color: scoreColor(listing.score),
-        fillColor: scoreColor(listing.score),
-        fillOpacity: 0.72,
-        weight: 2,
-      }).addTo(layer);
-      marker.bindPopup(renderPopup(listing));
-      bounds.push([Number(listing.latitude), Number(listing.longitude)]);
-      if (focusCenter && distanceKm(focusCenter, [Number(listing.latitude), Number(listing.longitude)]) <= 14.5) {
-        focusBounds.push([Number(listing.latitude), Number(listing.longitude)]);
+    for (const group of cells.values()) {
+      const hasActive = group.some((item) => item.id === active);
+      if (group.length === 1 || hasActive) {
+        for (const item of group) drawPin(layer, item, item.id === active);
+      } else {
+        drawCluster(layer, group);
       }
     }
+  }
 
-    if (focusCenter) {
-      map.setView(focusCenter, map.getSize().x < 700 ? 10.25 : 11.25);
-    } else if (focusBounds.length > targets.length) {
-      map.fitBounds(focusBounds, { padding: [28, 28], maxZoom: 12 });
-    } else if (bounds.length) {
-      map.fitBounds(bounds, { padding: [28, 28], maxZoom: 12 });
-    }
-  }, [listings, targets]);
+  function drawPin(layer, item, isActive) {
+    const marker = L.circleMarker([Number(item.latitude), Number(item.longitude)], {
+      radius: isActive ? 10 : 6 + Math.round((item.score || 0) / 25),
+      color: isActive ? "#ffffff" : scoreColor(item.score),
+      weight: isActive ? 3 : 1.5,
+      fillColor: scoreColor(item.score),
+      fillOpacity: 0.85,
+    }).addTo(layer);
+    marker.on("click", () => onOpen(item.id));
+    marker.on("mouseover", () => onHover(item.id));
+    marker.on("mouseout", () => onHover(null));
+    marker.bindTooltip(popupHtml(item), { direction: "top", offset: [0, -6], opacity: 1, className: "map-tip" });
+    markerIndex.current.set(item.id, marker);
+  }
+
+  function drawCluster(layer, group) {
+    const lat = group.reduce((s, i) => s + Number(i.latitude), 0) / group.length;
+    const lng = group.reduce((s, i) => s + Number(i.longitude), 0) / group.length;
+    const best = Math.max(...group.map((i) => i.score || 0));
+    const size = group.length > 50 ? 44 : group.length > 15 ? 38 : 32;
+    const marker = L.marker([lat, lng], {
+      icon: L.divIcon({
+        className: "cluster-pin",
+        html: `<span style="--c:${scoreColor(best)}">${group.length}</span>`,
+        iconSize: [size, size],
+        iconAnchor: [size / 2, size / 2],
+      }),
+    }).addTo(layer);
+    marker.on("click", () => {
+      const map = mapRef.current;
+      map.setView([lat, lng], Math.min(map.getZoom() + 2, 17));
+    });
+  }
 
   return (
-    <section className="map-card" aria-label="London rentals map">
-      <div className="map-heading">
+    <section className={`map-card${fullHeight ? " map-card--full" : ""}`} aria-label="Map">
+      <div className="map-overlay-head">
         <div>
-          <h2>London commute map</h2>
-          <p>Pins are coloured by balanced score across both destinations.</p>
+          <h2>Commute map</h2>
+          <p>{listings.filter((l) => l.latitude).length.toLocaleString("en-GB")} located · pins by score</p>
         </div>
-        <span>{Math.min(listings.length, 600).toLocaleString("en-GB")} pins</span>
+        <div className="map-legend">
+          <i style={{ background: "#34d399" }} /> High
+          <i style={{ background: "#fbbf24" }} /> Mid
+          <i style={{ background: "#f87171" }} /> Low
+        </div>
       </div>
       <div id="rental-map" />
-      <div className="map-legend">
-        <strong>Balanced Score</strong>
-        <div><span>High</span><i /><span>Low</span></div>
-        <small>Scores combine rent and route time to both targets.</small>
-      </div>
     </section>
   );
 }
 
-function scoreColor(score) {
-  if (score >= 78) return "#0d7a49";
-  if (score >= 62) return "#5d8f2f";
-  if (score >= 45) return "#c58a1b";
-  return "#b43b37";
-}
-
-function scoreRadius(score) {
-  if (score >= 80) return 8;
-  if (score >= 60) return 7;
-  return 6;
-}
-
-function targetCenter(targets) {
-  if (!targets.length) return null;
-  const total = targets.reduce(
-    (accumulator, target) => [
-      accumulator[0] + Number(target.latitude),
-      accumulator[1] + Number(target.longitude),
-    ],
-    [0, 0],
-  );
-  return [total[0] / targets.length, total[1] / targets.length];
-}
-
-function distanceKm([latA, lonA], [latB, lonB]) {
-  const latKm = (latA - latB) * 111;
-  const lonKm = (lonA - lonB) * 69 * Math.cos(((latA + latB) / 2) * (Math.PI / 180));
-  return Math.sqrt(latKm * latKm + lonKm * lonKm);
-}
-
-function renderPopup(listing) {
-  const routes = listing.routes
-    .map((route, index) => {
-      const routeName = escapeHtml(route.name || `Target ${index + 1}`);
-      return `
-        <div class="map-popup-route">
-          <span>${routeName}: transit ${formatMinutes(route.transit_minutes)}, cycle ${formatMinutes(route.cycling_minutes)}</span>
-          <div>
-            <a href="${directionsUrl(listing, route, "transit")}" target="_blank" rel="noreferrer">Map ${index + 1} transit</a>
-            <a href="${directionsUrl(listing, route, "bicycling")}" target="_blank" rel="noreferrer">Map ${index + 1} cycle</a>
-          </div>
-        </div>
-      `;
-    })
-    .join("");
-  const sources = sourceLinks(listing)
-    .map(
-      (source) =>
-        `<a href="${escapeAttribute(source.url)}" target="_blank" rel="noreferrer">Open ${escapeHtml(sourceLabel(source.source))}</a>`,
-    )
+function popupHtml(item) {
+  const photo = item.main_image
+    ? `<div class="tip-photo"><img src="${escapeAttr(item.main_image)}" alt=""/></div>`
+    : "";
+  const routes = (item.routes || [])
+    .map((route, index) => `<span>${escapeHtml(firstWord(route.name) || `T${index + 1}`)}: ${route.transit_minutes ?? "—"}m</span>`)
     .join("");
   return `
-    <div class="map-popup">
-      <strong>${escapeHtml(listing.address || listing.title || "Untitled listing")}</strong>
-      <span>${escapeHtml(listing.price_text || "Price unavailable")}</span>
-      ${routes}
-      <div class="map-popup-sources">${sources}</div>
-    </div>
-  `;
+    <div class="map-tip-card">
+      ${photo}
+      <strong>${escapeHtml(pcm(item.price_pcm, item.price_text))}</strong>
+      <span class="tip-addr">${escapeHtml(item.address || item.title || "Listing")}</span>
+      <div class="tip-routes">${routes}</div>
+    </div>`;
 }
 
-function directionsUrl(listing, target, mode) {
-  const origin = `${listing.latitude},${listing.longitude}`;
-  const destination = `${target.latitude},${target.longitude}`;
-  return escapeAttribute(
-    `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origin)}&destination=${encodeURIComponent(destination)}&travelmode=${mode}`,
-  );
-}
-
-function formatMinutes(value) {
-  return value === null || value === undefined ? "-" : `${Math.round(Number(value))} min`;
+function firstWord(name) {
+  return String(name || "").split(/[\s']/)[0];
 }
 
 function escapeHtml(value) {
@@ -181,25 +194,9 @@ function escapeHtml(value) {
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
+    .replaceAll('"', "&quot;");
 }
 
-function escapeAttribute(value) {
-  return escapeHtml(value).replaceAll("`", "&#096;");
-}
-
-function sourceLinks(listing) {
-  if (Array.isArray(listing.sources) && listing.sources.length) {
-    return listing.sources.filter((source) => source.url);
-  }
-  return listing.url ? [{ source: listing.source || "source", url: listing.url }] : [];
-}
-
-function sourceLabel(source) {
-  const labels = {
-    rightmove: "Rightmove",
-    zoopla: "Zoopla",
-  };
-  return labels[source] || String(source || "Source");
+function escapeAttr(value) {
+  return escapeHtml(value).replaceAll("'", "&#039;");
 }

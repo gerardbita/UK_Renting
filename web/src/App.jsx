@@ -1,31 +1,43 @@
 import { useEffect, useMemo, useState } from "react";
-import DashboardMap from "./components/DashboardMap.jsx";
+import TopBar from "./components/TopBar.jsx";
 import FilterRail from "./components/FilterRail.jsx";
-import ListingResults from "./components/ListingResults.jsx";
-import SummaryPanel from "./components/SummaryPanel.jsx";
-import CompareDrawer from "./components/CompareDrawer.jsx";
+import DashboardMap from "./components/DashboardMap.jsx";
+import ResultsTable from "./components/ResultsTable.jsx";
+import GalleryView from "./components/GalleryView.jsx";
+import StatsPanel from "./components/StatsPanel.jsx";
+import ListingDetail from "./components/ListingDetail.jsx";
+import CompareModal from "./components/CompareModal.jsx";
 import { enrichListings } from "./lib/scoring.js";
 import { resolveTargets } from "./lib/targets.js";
 
-const initialFilters = {
+const DEFAULT_FILTERS = {
   query: "",
+  minRent: "",
   maxRent: "",
   minBeds: "",
   maxTransitA: "",
   maxTransitB: "",
   maxCycleAny: "",
+  activeOnly: true,
+  photosOnly: false,
+  hideLetAgreed: true,
+  freshOnly: false,
   gardenOnly: false,
   parkingOnly: false,
-  activeOnly: true,
   completeRoutesOnly: false,
   sort: "score",
+  weights: [1, 1],
 };
 
 export default function App() {
   const [payload, setPayload] = useState(null);
   const [loadState, setLoadState] = useState({ status: "loading", error: "" });
-  const [filters, setFilters] = useState(initialFilters);
+  const [filters, setFilters] = useState(() => ({ ...DEFAULT_FILTERS, ...decodeFilters() }));
+  const [view, setView] = useState("table");
   const [selectedIds, setSelectedIds] = useState([]);
+  const [openId, setOpenId] = useState(null);
+  const [activeId, setActiveId] = useState(null);
+  const [compareOpen, setCompareOpen] = useState(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -41,42 +53,34 @@ export default function App() {
     return () => controller.abort();
   }, []);
 
+  useEffect(() => {
+    encodeFilters(filters);
+  }, [filters]);
+
   const targets = useMemo(() => resolveTargets(payload?.routing), [payload]);
   const listings = useMemo(
-    () => enrichListings(payload?.listings || [], targets),
-    [payload, targets],
+    () => enrichListings(payload?.listings || [], targets, filters.weights),
+    [payload, targets, filters.weights],
   );
-  const filteredListings = useMemo(
-    () => filterAndSortListings(listings, filters),
-    [listings, filters],
-  );
-  const selectedListings = selectedIds
-    .map((id) => listings.find((listing) => listing.id === id))
-    .filter(Boolean);
+  const filtered = useMemo(() => filterAndSort(listings, filters), [listings, filters]);
 
-  function toggleSelected(id) {
-    setSelectedIds((current) => {
-      if (current.includes(id)) return current.filter((item) => item !== id);
-      return [...current, id].slice(-5);
-    });
-  }
+  const byId = useMemo(() => new Map(listings.map((listing) => [listing.id, listing])), [listings]);
+  const openListing = openId ? byId.get(openId) : null;
+  const compareListings = selectedIds.map((id) => byId.get(id)).filter(Boolean);
 
-  if (loadState.status === "loading") {
-    return (
-      <main className="app-shell app-shell--loading">
-        <div className="loading-card">
-          <span className="loading-mark" />
-          <h1>Loading UK Renting</h1>
-          <p>Preparing listings, map pins, commute scores, and comparison controls.</p>
-        </div>
-      </main>
+  function toggleSelect(id) {
+    setSelectedIds((current) =>
+      current.includes(id) ? current.filter((item) => item !== id) : [...current, id].slice(-4),
     );
   }
 
+  if (loadState.status === "loading") {
+    return <LoadingShell />;
+  }
   if (loadState.status === "error") {
     return (
-      <main className="app-shell app-shell--loading">
-        <div className="loading-card">
+      <main className="app-shell app-shell--center">
+        <div className="message-card">
           <h1>Data could not load</h1>
           <p>{loadState.error}</p>
         </div>
@@ -86,77 +90,117 @@ export default function App() {
 
   return (
     <main className="app-shell">
-      <header className="topbar">
-        <div className="brand-block">
-          <span className="brand-mark" aria-hidden="true">
-            <svg viewBox="0 0 24 24" role="img">
-              <path d="M3 11.4 12 3l9 8.4" />
-              <path d="M5.5 10.5V21h13V10.5" />
-              <path d="M9 21v-6h6v6" />
-            </svg>
-          </span>
-          <h1>UK Renting</h1>
-        </div>
-        <div className="update-block">
-          <span className="clock-mark" aria-hidden="true">◷</span>
-          <span>Last updated: {formatDateTime(payload?.generated_at)}</span>
-          <strong>Live</strong>
-        </div>
-        <div className="target-strip" aria-label="Route targets">
-          {targets.map((target, index) => (
-            <span key={`${target.latitude}:${target.longitude}`}>
-              <strong>{index + 1}</strong>
-              {target.name}
-            </span>
-          ))}
-        </div>
-        <a className="deploy-status" href="https://github.com/gerardbita/UK_Renting" target="_blank" rel="noreferrer">
-          GitHub Pages <span /> Deployed
-        </a>
-      </header>
+      <TopBar
+        meta={payload?.meta}
+        generatedAt={payload?.generated_at}
+        view={view}
+        onView={setView}
+        compareCount={selectedIds.length}
+        onOpenCompare={() => setCompareOpen(true)}
+      />
 
-      <section className="dashboard-grid">
+      <div className="layout">
         <FilterRail
           filters={filters}
           setFilters={setFilters}
-          onReset={() => setFilters(initialFilters)}
-          onApply={() => {
-            document.querySelector(".results-panel")?.scrollIntoView({
-              behavior: "smooth",
-              block: "start",
-            });
-          }}
+          targets={targets}
+          onReset={() => setFilters({ ...DEFAULT_FILTERS })}
+          resultCount={filtered.length}
         />
 
-        <section className="main-stage" aria-label="Map and listing results">
-          <DashboardMap listings={filteredListings} targets={targets} />
-          <ListingResults
-            listings={filteredListings}
-            targets={targets}
-            selectedIds={selectedIds}
-            onToggleSelected={toggleSelected}
-            updatedAt={payload?.generated_at}
-          />
+        <section className="stage">
+          {view !== "map" ? (
+            <DashboardMap
+              listings={filtered}
+              targets={targets}
+              activeId={activeId}
+              onOpen={setOpenId}
+              onHover={setActiveId}
+            />
+          ) : null}
+
+          {view === "table" ? (
+            <ResultsTable
+              listings={filtered}
+              targets={targets}
+              selectedIds={selectedIds}
+              onToggleSelect={toggleSelect}
+              onOpen={setOpenId}
+              onHover={setActiveId}
+              activeId={activeId}
+            />
+          ) : null}
+
+          {view === "gallery" ? (
+            <GalleryView
+              listings={filtered}
+              targets={targets}
+              selectedIds={selectedIds}
+              onToggleSelect={toggleSelect}
+              onOpen={setOpenId}
+              onHover={setActiveId}
+              activeId={activeId}
+            />
+          ) : null}
+
+          {view === "map" ? (
+            <DashboardMap
+              listings={filtered}
+              targets={targets}
+              activeId={activeId}
+              onOpen={setOpenId}
+              onHover={setActiveId}
+              fullHeight
+            />
+          ) : null}
         </section>
 
-        <SummaryPanel listings={filteredListings} allListings={listings} targets={targets} />
-      </section>
+        <StatsPanel
+          listings={filtered}
+          targets={targets}
+          onOpen={setOpenId}
+          onHover={setActiveId}
+          activeId={activeId}
+        />
+      </div>
 
-      <CompareDrawer
-        listings={selectedListings}
-        targets={targets}
-        onRemove={(id) => setSelectedIds((current) => current.filter((item) => item !== id))}
-      />
+      {openListing ? (
+        <ListingDetail
+          listing={openListing}
+          targets={targets}
+          onClose={() => setOpenId(null)}
+          onCompare={toggleSelect}
+          isComparing={selectedIds.includes(openListing.id)}
+        />
+      ) : null}
+
+      {compareOpen ? (
+        <CompareModal
+          listings={compareListings}
+          targets={targets}
+          onClose={() => setCompareOpen(false)}
+          onRemove={toggleSelect}
+        />
+      ) : null}
+    </main>
+  );
+}
+
+function LoadingShell() {
+  return (
+    <main className="app-shell app-shell--center">
+      <div className="message-card">
+        <span className="loading-mark" />
+        <h1>Loading RentWatch</h1>
+        <p>Scoring listings, plotting commutes, and building the dashboard…</p>
+      </div>
     </main>
   );
 }
 
 async function loadListingsData(signal) {
   const basePath = import.meta.env.BASE_URL || "/";
-  const candidates = [
-    `${basePath.replace(/\/$/, "")}/data/listings.json`,
-    "/data/listings.json",
-  ];
+  const candidates = [`${basePath.replace(/\/$/, "")}/data/listings.json`, "/data/listings.json"];
   let lastError = null;
   for (const url of [...new Set(candidates)]) {
     try {
@@ -173,61 +217,112 @@ async function loadListingsData(signal) {
   throw lastError || new Error("Could not load listings data");
 }
 
-function filterAndSortListings(listings, filters) {
+function filterAndSort(listings, filters) {
   const query = filters.query.trim().toLowerCase();
-  const maxRent = parseOptionalNumber(filters.maxRent);
-  const minBeds = parseOptionalNumber(filters.minBeds);
-  const maxTransitA = parseOptionalNumber(filters.maxTransitA);
-  const maxTransitB = parseOptionalNumber(filters.maxTransitB);
-  const maxCycleAny = parseOptionalNumber(filters.maxCycleAny);
+  const minRent = num(filters.minRent);
+  const maxRent = num(filters.maxRent);
+  const minBeds = num(filters.minBeds);
+  const maxTransitA = num(filters.maxTransitA);
+  const maxTransitB = num(filters.maxTransitB);
+  const maxCycleAny = num(filters.maxCycleAny);
 
-  return listings
-    .filter((listing) => {
-      if (filters.activeOnly && listing.status !== "active") return false;
-      if (query && !searchText(listing).includes(query)) return false;
-      if (maxRent !== null && Number(listing.price_pcm || Infinity) > maxRent) return false;
-      if (minBeds !== null && Number(listing.bedrooms || 0) < minBeds) return false;
-      if (filters.gardenOnly && !listing.has_garden) return false;
-      if (filters.parkingOnly && !listing.has_parking) return false;
-      if (filters.completeRoutesOnly && listing.routes.some((route) => route.transit_minutes == null && route.cycling_minutes == null)) return false;
-      if (maxTransitA !== null && Number(listing.routes[0]?.transit_minutes ?? Infinity) > maxTransitA) return false;
-      if (maxTransitB !== null && Number(listing.routes[1]?.transit_minutes ?? Infinity) > maxTransitB) return false;
-      if (maxCycleAny !== null && listing.routes.some((route) => Number(route.cycling_minutes ?? Infinity) > maxCycleAny)) return false;
-      return true;
-    })
-    .sort((a, b) => {
-      if (filters.sort === "rent") return compareNullable(a.price_pcm, b.price_pcm);
-      if (filters.sort === "targetA") return compareNullable(a.routes[0]?.transit_minutes, b.routes[0]?.transit_minutes);
-      if (filters.sort === "targetB") return compareNullable(a.routes[1]?.transit_minutes, b.routes[1]?.transit_minutes);
-      if (filters.sort === "cycle") return compareNullable(a.routes[0]?.cycling_minutes, b.routes[0]?.cycling_minutes);
-      if (filters.sort === "newest") return String(b.search_last_seen_at || "").localeCompare(String(a.search_last_seen_at || ""));
-      return b.score - a.score;
-    });
+  const result = listings.filter((listing) => {
+    if (filters.activeOnly && listing.status !== "active") return false;
+    if (filters.photosOnly && !listing.main_image) return false;
+    if (filters.hideLetAgreed && listing.let_agreed) return false;
+    if (filters.freshOnly && !(listing.freshness === "new" || listing.freshness === "reduced")) return false;
+    if (filters.gardenOnly && !listing.has_garden) return false;
+    if (filters.parkingOnly && !listing.has_parking) return false;
+    if (query && !searchText(listing).includes(query)) return false;
+    if (minRent !== null && Number(listing.price_pcm ?? 0) < minRent) return false;
+    if (maxRent !== null && Number(listing.price_pcm ?? Infinity) > maxRent) return false;
+    if (minBeds !== null && Number(listing.bedrooms ?? 0) < minBeds) return false;
+    if (filters.completeRoutesOnly && listing.routes.some((r) => r.transit_minutes == null && r.cycling_minutes == null)) return false;
+    if (maxTransitA !== null && Number(listing.routes[0]?.transit_minutes ?? Infinity) > maxTransitA) return false;
+    if (maxTransitB !== null && Number(listing.routes[1]?.transit_minutes ?? Infinity) > maxTransitB) return false;
+    if (maxCycleAny !== null && !listing.routes.some((r) => Number(r.cycling_minutes ?? Infinity) <= maxCycleAny)) return false;
+    return true;
+  });
+
+  result.sort((a, b) => {
+    switch (filters.sort) {
+      case "rent_asc":
+        return nullable(a.price_pcm, b.price_pcm);
+      case "rent_desc":
+        return nullable(b.price_pcm, a.price_pcm);
+      case "commute":
+        return nullable(worstCommute(a), worstCommute(b));
+      case "targetA":
+        return nullable(a.routes[0]?.transit_minutes, b.routes[0]?.transit_minutes);
+      case "targetB":
+        return nullable(a.routes[1]?.transit_minutes, b.routes[1]?.transit_minutes);
+      case "newest":
+        return String(b.search_last_seen_at || "").localeCompare(String(a.search_last_seen_at || ""));
+      default:
+        return b.score - a.score;
+    }
+  });
+  return result;
+}
+
+function worstCommute(listing) {
+  const values = listing.routes
+    .map((route) => route.transit_minutes ?? route.cycling_minutes)
+    .filter((value) => Number.isFinite(Number(value)));
+  return values.length ? Math.max(...values.map(Number)) : null;
 }
 
 function searchText(listing) {
-  return [listing.address, listing.title, listing.agent, listing.summary, listing.price_text]
+  return [listing.address, listing.title, listing.agent, listing.summary, listing.property_subtype, (listing.key_features || []).join(" ")]
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
 }
 
-function parseOptionalNumber(value) {
+function num(value) {
   if (value === "" || value === null || value === undefined) return null;
-  const number = Number(value);
-  return Number.isFinite(number) ? number : null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
-function compareNullable(a, b) {
+function nullable(a, b) {
   if (a === null || a === undefined) return 1;
   if (b === null || b === undefined) return -1;
   return Number(a) - Number(b);
 }
 
-function formatDateTime(value) {
-  if (!value) return "unknown";
-  return new Intl.DateTimeFormat("en-GB", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
+// --- URL state (shareable filters) ---
+const URL_KEYS = ["query", "minRent", "maxRent", "minBeds", "maxTransitA", "maxTransitB", "maxCycleAny", "sort"];
+const BOOL_KEYS = ["activeOnly", "photosOnly", "hideLetAgreed", "freshOnly", "gardenOnly", "parkingOnly", "completeRoutesOnly"];
+
+function encodeFilters(filters) {
+  const params = new URLSearchParams();
+  for (const key of URL_KEYS) {
+    if (filters[key]) params.set(key, filters[key]);
+  }
+  for (const key of BOOL_KEYS) {
+    if (filters[key] !== DEFAULT_FILTERS[key]) params.set(key, filters[key] ? "1" : "0");
+  }
+  if (filters.weights?.some((w, i) => w !== DEFAULT_FILTERS.weights[i])) {
+    params.set("w", filters.weights.join(","));
+  }
+  const query = params.toString();
+  const url = `${window.location.pathname}${query ? `?${query}` : ""}`;
+  window.history.replaceState(null, "", url);
+}
+
+function decodeFilters() {
+  const params = new URLSearchParams(window.location.search);
+  const out = {};
+  for (const key of URL_KEYS) {
+    if (params.has(key)) out[key] = params.get(key);
+  }
+  for (const key of BOOL_KEYS) {
+    if (params.has(key)) out[key] = params.get(key) === "1";
+  }
+  if (params.has("w")) {
+    const weights = params.get("w").split(",").map(Number).filter(Number.isFinite);
+    if (weights.length) out.weights = weights;
+  }
+  return out;
 }

@@ -12,9 +12,7 @@ COMMIT_MESSAGE="${COMMIT_MESSAGE:-Update split price search data}"
 PYTHON_BIN="${PYTHON_BIN:-}"
 DRY_RUN="${DRY_RUN:-0}"
 SEND_NOTIFICATIONS="${SEND_NOTIFICATIONS:-0}"
-AUTH_ZOOPLA="${AUTH_ZOOPLA:-0}"
 SKIP_ROUTES="${SKIP_ROUTES:-0}"
-RUN_ZOOPLA="${RUN_ZOOPLA:-0}"
 SEARCH_CHANGED="${SEARCH_CHANGED:-0}"
 
 if [[ -z "$PYTHON_BIN" ]]; then
@@ -62,13 +60,10 @@ def with_query_values(url: str, values: dict[str, int | str]) -> str:
     return urlunparse(parsed._replace(query=urlencode(query)))
 
 
-def radius_query_values(radius: str) -> tuple[dict[str, str], dict[str, str]]:
+def radius_query_values(radius: str) -> dict[str, str]:
     if not radius:
-        return {}, {}
-    value = float(radius)
-    rightmove_radius = f"{value:.1f}"
-    zoopla_radius = f"{value:g}"
-    return {"radius": rightmove_radius}, {"radius": zoopla_radius}
+        return {}
+    return {"radius": f"{float(radius):.1f}"}
 
 
 def normalize_search_names(db_path: Path, target_name: str) -> None:
@@ -152,27 +147,18 @@ if source_search.get("url"):
 source_urls.extend(source_search.get("urls") or [])
 
 rightmove_base = first_url(source_urls, "rightmove.co.uk")
-zoopla_base = first_url(source_urls, "zoopla.co.uk")
-if not rightmove_base and not zoopla_base:
-    raise SystemExit("Could not find a Rightmove or Zoopla URL in config.json.")
+if not rightmove_base:
+    raise SystemExit("Could not find a Rightmove URL in config.json.")
 
 split_urls = []
-rightmove_radius, zoopla_radius = radius_query_values(search_radius)
+rightmove_radius = radius_query_values(search_radius)
 for low, high in price_bands:
-    if rightmove_base:
-        split_urls.append(
-            with_query_values(
-                rightmove_base,
-                {"minPrice": low, "maxPrice": high, "index": 0, **rightmove_radius},
-            )
+    split_urls.append(
+        with_query_values(
+            rightmove_base,
+            {"minPrice": low, "maxPrice": high, "index": 0, **rightmove_radius},
         )
-    if zoopla_base:
-        split_urls.append(
-            with_query_values(
-                zoopla_base,
-                {"price_min": low, "price_max": high, **zoopla_radius},
-            )
-        )
+    )
 
 new_search = {
     "name": search_name,
@@ -201,14 +187,13 @@ if db_path.exists():
     normalize_search_names(db_path, search_name)
 
 print(f"Configured {len(price_bands)} price bands under search name: {search_name}")
-print(f"Generated {len(split_urls)} portal URL(s):")
+print(f"Generated {len(split_urls)} Rightmove URL(s):")
 for url in split_urls:
-    host = urlparse(url).netloc
     query = dict(parse_qsl(urlparse(url).query, keep_blank_values=True))
-    low = query.get("minPrice") or query.get("price_min")
-    high = query.get("maxPrice") or query.get("price_max")
+    low = query.get("minPrice")
+    high = query.get("maxPrice")
     radius = query.get("radius") or "unchanged"
-    print(f"- {host}: GBP {low}-{high}; radius {radius} miles")
+    print(f"- GBP {low}-{high}; radius {radius} miles")
 PY
 
 echo
@@ -218,10 +203,6 @@ if [[ "$DRY_RUN" == "1" ]]; then
   echo
   echo "DRY_RUN=1 set; stopping before scraping/export/git."
   exit 0
-fi
-
-if [[ "$AUTH_ZOOPLA" == "1" ]]; then
-  "$PYTHON_BIN" -m rentwatch --config "$CONFIG_PATH" auth-zoopla
 fi
 
 run_args=(run --once --prime)
@@ -234,25 +215,11 @@ fi
 if [[ "$SEARCH_CHANGED" == "1" ]]; then
   run_args+=(--search-changed)
 fi
-case "$RUN_ZOOPLA" in
-  0|false|no)
-    run_args+=(--skip-zoopla)
-    ;;
-  only)
-    run_args+=(--only-zoopla)
-    ;;
-  1|true|yes)
-    ;;
-  *)
-    echo "RUN_ZOOPLA must be 1, 0, or only. Got: $RUN_ZOOPLA" >&2
-    exit 2
-    ;;
-esac
 
 "$PYTHON_BIN" -m rentwatch --config "$CONFIG_PATH" "${run_args[@]}"
 "$PYTHON_BIN" scripts/export_site_data.py
 
-git add docs/data/listings.json web/public/data/listings.json
+git add docs/data/listings.json
 
 if git diff --cached --quiet; then
   echo "No website data changes to commit."

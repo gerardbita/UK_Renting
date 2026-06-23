@@ -29,6 +29,30 @@ def test_parse_results_deduplicates_and_extracts_fields():
     assert first.agent == "Marketed by Example Estates"
 
 
+def test_parse_extracts_rich_detail_from_next_data():
+    page = parse_results_html(FIXTURE.read_text(), page_url="https://example.test/search")
+    by_id = {listing.property_id: listing for listing in page.listings}
+
+    rich = by_id["123456789"]
+    assert rich.image_urls == [
+        "https://media.rightmove.co.uk/photo_max_1.jpeg",
+        "https://media.rightmove.co.uk/photo_max_2.jpeg",
+    ]
+    assert rich.main_image == "https://media.rightmove.co.uk/photo_max_1.jpeg"
+    assert rich.raw["image_urls"] == rich.image_urls  # powers cross-portal dedupe
+    assert rich.bathrooms == 1
+    assert rich.property_subtype == "Apartment"
+    assert rich.size_sqft == 650
+    assert rich.first_listed_date == "2026-05-01T10:00:00Z"
+    assert rich.added_or_reduced == "Reduced on 10/05/2026"
+    assert rich.update_reason == "price_reduced"
+    assert rich.available_date == "2026-06-01"
+    assert rich.key_features == ["Balcony", "Modern kitchen"]
+    assert rich.let_agreed is False
+
+    assert by_id["987654321"].let_agreed is True  # displayStatus "Let Agreed"
+
+
 def test_weekly_rent_is_normalized_to_pcm():
     assert parse_price_pcm("£450 pw") == 1950
 

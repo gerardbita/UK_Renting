@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -9,6 +11,8 @@ from .rightmove_url import RightmoveUrlOptions, build_rightmove_url
 
 
 DEFAULT_CONFIG_PATH = Path("config.json")
+
+_ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
 @dataclass(slots=True)
@@ -99,6 +103,7 @@ class TelegramConfig:
     chat_id: str = ""
     chat_ids: list[str] = field(default_factory=list)
     route_filters: list[TelegramRouteFilterConfig] = field(default_factory=list)
+    digest: bool = False
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "TelegramConfig":
@@ -119,6 +124,7 @@ class TelegramConfig:
             chat_id=str(data.get("chat_id", "")),
             chat_ids=chat_ids,
             route_filters=route_filters,
+            digest=bool(data.get("digest", False)),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -130,6 +136,7 @@ class TelegramConfig:
             "route_filters": [
                 route_filter.to_dict() for route_filter in self.route_filters
             ],
+            "digest": self.digest,
         }
 
     def recipient_chat_ids(self) -> list[str]:
@@ -369,7 +376,26 @@ def load_config(path: Path = DEFAULT_CONFIG_PATH) -> AppConfig:
     if not path.exists():
         return AppConfig()
     with path.open("r", encoding="utf-8") as handle:
-        return AppConfig.from_dict(json.load(handle))
+        data = json.load(handle)
+    return AppConfig.from_dict(interpolate_env(data))
+
+
+def interpolate_env(value: Any) -> Any:
+    """Resolve ``${ENV_VAR}`` references in any string config value.
+
+    Lets secrets such as the Telegram bot token live in the environment instead
+    of plaintext in config.json. Unknown variables are left untouched so a literal
+    ``${...}`` is never silently blanked.
+    """
+    if isinstance(value, str):
+        return _ENV_PATTERN.sub(
+            lambda match: os.environ.get(match.group(1), match.group(0)), value
+        )
+    if isinstance(value, list):
+        return [interpolate_env(item) for item in value]
+    if isinstance(value, dict):
+        return {key: interpolate_env(item) for key, item in value.items()}
+    return value
 
 
 def save_config(config: AppConfig, path: Path = DEFAULT_CONFIG_PATH) -> None:
@@ -422,17 +448,6 @@ def sample_config() -> AppConfig:
                         "partFurnished&dontShow=houseShare%2Cretirement%2Cstudent&"
                         "channel=RENT&index=0&sortType=6&minPrice=1000&"
                         "maxPrice=2500&radius=10.0&locationIdentifier=POSTCODE%5E918640"
-                    ),
-                    (
-                        "https://www.zoopla.co.uk/to-rent/property/london/"
-                        "st-marys-terrace/w2-1sj/?beds_min=1&"
-                        "furnished_state=unfurnished&is_retirement_home=false&"
-                        "is_shared_accommodation=false&is_student_accommodation=false&"
-                        "price_frequency=per_month&price_max=2500&price_min=1000&"
-                        "property_sub_type=semi_detached&property_sub_type=flats&"
-                        "property_sub_type=detached&property_sub_type=terraced&"
-                        "property_sub_type=bungalow&q=W2%201SJ&radius=10&"
-                        "search_source=to-rent"
                     ),
                 ],
                 include_keywords=[],

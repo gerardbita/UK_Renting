@@ -1,11 +1,6 @@
-from argparse import Namespace
-
 from rentwatch.cli import (
-    enabled_sources_from_args,
     enrich_listings_with_routes,
-    filter_urls_by_source,
     preserve_existing_route_data,
-    preflight_zoopla_access,
     run_once,
     search_config_fingerprint,
 )
@@ -21,7 +16,6 @@ from rentwatch.dedupe import assign_canonical_keys, match_score
 from rentwatch.models import Listing
 from rentwatch.notifications import TelegramNotifier
 from rentwatch.scrapers.base import ScraperError
-from rentwatch.scrapers.zoopla import parse_results_html, with_page
 
 
 def test_search_config_accepts_multiple_urls():
@@ -30,19 +24,21 @@ def test_search_config_accepts_multiple_urls():
             "name": "work commute",
             "urls": [
                 "https://www.rightmove.co.uk/property-to-rent/find.html?index=0",
-                "https://www.zoopla.co.uk/to-rent/property/london/w2/",
+                "https://www.rightmove.co.uk/property-to-rent/find.html?index=24",
             ],
         }
     )
 
     assert search.resolved_urls() == [
         "https://www.rightmove.co.uk/property-to-rent/find.html?index=0",
-        "https://www.zoopla.co.uk/to-rent/property/london/w2/",
+        "https://www.rightmove.co.uk/property-to-rent/find.html?index=24",
     ]
 
 
 def test_cross_source_match_uses_coordinates_beds_rent_and_address():
-    rightmove = Listing(
+    # The dedupe engine is source-agnostic; it merges the same home seen via two
+    # different feeds when the signals line up.
+    primary = Listing(
         source="rightmove",
         property_id="123",
         url="https://www.rightmove.co.uk/properties/123",
@@ -53,10 +49,10 @@ def test_cross_source_match_uses_coordinates_beds_rent_and_address():
         latitude=51.508,
         longitude=-0.193,
     )
-    zoopla = Listing(
-        source="zoopla",
+    other = Listing(
+        source="onthemarket",
         property_id="456",
-        url="https://www.zoopla.co.uk/to-rent/details/456/",
+        url="https://www.onthemarket.com/details/456/",
         address="Palace Gardens Terrace, W8",
         price_text="£1,925 pcm",
         price_pcm=1925,
@@ -65,7 +61,7 @@ def test_cross_source_match_uses_coordinates_beds_rent_and_address():
         longitude=-0.19304,
     )
 
-    score, reasons = match_score(zoopla, rightmove)
+    score, reasons = match_score(other, primary)
     assert score >= 80
     assert "same bedrooms" in reasons
 
@@ -85,9 +81,9 @@ def test_assign_canonical_keys_reuses_existing_cross_source_property():
     )
     scraped = [
         Listing(
-            source="zoopla",
+            source="onthemarket",
             property_id="456",
-            url="https://www.zoopla.co.uk/to-rent/details/456/",
+            url="https://www.onthemarket.com/details/456/",
             address="Palace Gardens Terrace, W8",
             price_text="£1,925 pcm",
             price_pcm=1925,
@@ -100,87 +96,6 @@ def test_assign_canonical_keys_reuses_existing_cross_source_property():
     assign_canonical_keys(scraped, [existing])
 
     assert scraped[0].canonical_key == "property:rightmove:123"
-
-
-def test_zoopla_card_parser_extracts_listing_fields():
-    html = """
-    <html><body>
-      <article>
-        <a href="/to-rent/details/987654/">Pavilion Court, Stafford Road, London NW6</a>
-        <span>£2,200 pcm</span>
-        <span>2 beds</span>
-        <p>A newly refurbished flat close to transport.</p>
-      </article>
-    </body></html>
-    """
-
-    page = parse_results_html(html, page_url="https://www.zoopla.co.uk/to-rent/")
-
-    assert len(page.listings) == 1
-    assert page.listings[0].listing_key == "zoopla:987654"
-    assert page.listings[0].price_pcm == 2200
-    assert page.listings[0].bedrooms == 2
-    assert page.listings[0].url == "https://www.zoopla.co.uk/to-rent/details/987654/"
-
-
-def test_zoopla_page_number_uses_pn_query_param():
-    assert (
-        with_page("https://www.zoopla.co.uk/to-rent/property/london/w2/?q=W2", 3)
-        == "https://www.zoopla.co.uk/to-rent/property/london/w2/?q=W2&pn=3"
-    )
-
-
-def test_zoopla_preflight_runs_before_scraping():
-    calls = []
-
-    class FakeZooplaScraper:
-        def check_access(self, url):
-            calls.append(url)
-            return 25
-
-    config = AppConfig(
-        searches=[
-            SearchConfig(
-                name="combined",
-                urls=[
-                    "https://www.rightmove.co.uk/property-to-rent/find.html",
-                    "https://www.zoopla.co.uk/to-rent/property/london/w2/",
-                ],
-            )
-        ]
-    )
-
-    assert preflight_zoopla_access(config, {"zoopla": FakeZooplaScraper()})
-    assert calls == ["https://www.zoopla.co.uk/to-rent/property/london/w2/"]
-
-
-def test_skip_zoopla_sources_filters_urls_and_preflight():
-    urls = [
-        "https://www.rightmove.co.uk/property-to-rent/find.html",
-        "https://www.zoopla.co.uk/to-rent/property/london/w2/",
-    ]
-    sources = enabled_sources_from_args(
-        Namespace(skip_zoopla=True, only_zoopla=False)
-    )
-
-    assert sources == {"rightmove"}
-    assert filter_urls_by_source(urls, sources) == [urls[0]]
-
-    config = AppConfig(searches=[SearchConfig(name="combined", urls=urls)])
-    assert preflight_zoopla_access(config, {}, enabled_sources=sources)
-
-
-def test_only_zoopla_sources_filters_urls():
-    urls = [
-        "https://www.rightmove.co.uk/property-to-rent/find.html",
-        "https://www.zoopla.co.uk/to-rent/property/london/w2/",
-    ]
-    sources = enabled_sources_from_args(
-        Namespace(skip_zoopla=False, only_zoopla=True)
-    )
-
-    assert sources == {"zoopla"}
-    assert filter_urls_by_source(urls, sources) == [urls[1]]
 
 
 def test_limited_page_run_can_be_read_only(tmp_path):

@@ -1,10 +1,10 @@
 # RentWatch
 
-RentWatch is a personal property search monitor. It is inspired by the small
-RightMoveScraper script, but stores state in SQLite, supports Rightmove and
-Zoopla search URLs, tracks price changes, filters results, deduplicates matching
-homes across portals, and sends Telegram notifications safely using POST
-requests.
+RentWatch is a personal London rental monitor. It scrapes Rightmove search URLs,
+stores state in SQLite, tracks price changes, captures listing photos and detail,
+deduplicates matching homes, scores each listing against **two** commute
+destinations, and sends Telegram alerts. A dark, data-dense React dashboard is
+published to GitHub Pages.
 
 Use it at low frequency for personal monitoring. Check the website's terms before
 running it, and do not use it for high-volume or commercial scraping.
@@ -25,27 +25,19 @@ Create a starter config:
 python3 -m rentwatch init-config
 ```
 
-Or add a pasted search URL directly:
+Or add a pasted Rightmove search URL directly:
 
 ```bash
 python3 -m rentwatch add "Camden 1-bed" "https://www.rightmove.co.uk/property-to-rent/find.html?..."
 ```
 
-You can add a Zoopla URL under the same search name. RentWatch will keep one
-combined search and merge duplicate homes when the signals are strong enough:
-
-```bash
-python3 -m rentwatch add "Camden 1-bed" "https://www.zoopla.co.uk/to-rent/property/..."
-```
-
-Searches can contain one URL or multiple portal URLs:
+A search can hold one URL or several (e.g. price bands — see below):
 
 ```json
 {
   "name": "W2 garden unfurnished",
   "urls": [
-    "https://www.rightmove.co.uk/property-to-rent/find.html?...",
-    "https://www.zoopla.co.uk/to-rent/property/..."
+    "https://www.rightmove.co.uk/property-to-rent/find.html?..."
   ],
   "include_keywords": [],
   "exclude_keywords": ["student", "short let"],
@@ -57,44 +49,38 @@ Searches can contain one URL or multiple portal URLs:
 }
 ```
 
-Zoopla blocks normal Python HTTP requests more aggressively than Rightmove. If a
-Zoopla run reports a browser verification page, run this once and complete the
-verification in the Chrome window that opens:
+### Secrets via environment variables
 
-```bash
-python3 -m rentwatch auth-zoopla
+Any string in `config.json` may reference an environment variable with
+`${VAR}` syntax, so secrets never need to live in the file:
+
+```json
+{
+  "notifications": {
+    "telegram": {
+      "enabled": true,
+      "bot_token": "${TELEGRAM_BOT_TOKEN}",
+      "chat_id": "${TELEGRAM_CHAT_ID}",
+      "chat_ids": [],
+      "digest": false
+    }
+  }
+}
 ```
 
-The verification profile is stored locally under `.rentwatch-browser/` and is
-ignored by git.
-
-When `config.json` contains a Zoopla URL, `python3 -m rentwatch run` checks
-Zoopla access before the normal scraping loop. This makes Zoopla verification
-fail fast, before Rightmove scraping, routing, or Telegram notification work
-starts. You can bypass that startup check while debugging with:
-
 ```bash
-python3 -m rentwatch run --skip-zoopla-preflight
+export TELEGRAM_BOT_TOKEN="123456:abc"
+export TELEGRAM_CHAT_ID="123456789"
 ```
 
-If Zoopla verification is getting in the way, keep the Zoopla URLs in
-`config.json` but skip them for a run:
+Unknown variables are left untouched. `chat_id` is the main recipient; add extra
+recipients to `chat_ids`. Set `"digest": true` to receive **one** combined message
+per poll ("🆕 4 new · 📉 2 price drops" plus the top items) instead of one message
+per change.
 
-```bash
-python3 -m rentwatch run --once --skip-zoopla
-```
+### Routing to two destinations
 
-To test Zoopla only:
-
-```bash
-python3 -m rentwatch run --once --only-zoopla
-```
-
-Normal `run` includes every configured portal. Use `--skip-zoopla` whenever you
-want Rightmove-only without editing `config.json`.
-
-Optional routing can calculate TfL public-transport and cycling time to a
-specific target. To calculate routes to more than one place, add `targets`:
+Optional routing calculates TfL public-transport and cycling time to each target:
 
 ```json
 {
@@ -108,28 +94,18 @@ specific target. To calculate routes to more than one place, add `targets`:
     "departure_day": "wednesday",
     "departure_time": "08:00",
     "targets": [
-      {
-        "name": "Noémie's work",
-        "latitude": 51.5209823,
-        "longitude": -0.1770073
-      },
-      {
-        "name": "Gerard's work",
-        "latitude": 51.4928449,
-        "longitude": -0.2198001
-      }
+      { "name": "Noémie's work", "latitude": 51.5209823, "longitude": -0.1770073 },
+      { "name": "Gerard's work", "latitude": 51.4928449, "longitude": -0.2198001 }
     ]
   }
 }
 ```
 
-`cache_hours: null` means routes are calculated once and reused. Use
-`python3 -m rentwatch run --once --no-notify --refresh-routes` if you
-intentionally want to recalculate them.
+`cache_hours: null` calculates routes once and reuses them. Force a recalculation
+with `python3 -m rentwatch run --once --no-notify --refresh-routes`.
 
-Telegram alerts can also be limited by commute time. This only controls which
-events get sent to Telegram; the scraper still stores all matching listings and
-the dashboard still shows both configured targets:
+Telegram alerts can be limited by commute time (this only filters what is *sent*;
+the dashboard still stores and shows everything):
 
 ```json
 {
@@ -149,11 +125,73 @@ the dashboard still shows both configured targets:
 }
 ```
 
-## React dashboard
+## Run
 
-The GitHub Pages site is a React/Vite dashboard in `web/`. It reads the
-exported JSON from `web/public/data/listings.json`; `scripts/export_site_data.py`
-also writes that file after updating `docs/data/listings.json`.
+Prime the database first so current listings are saved without a large initial
+notification batch:
+
+```bash
+python3 -m rentwatch run --once --prime
+```
+
+Then a single check:
+
+```bash
+python3 -m rentwatch run --once
+```
+
+Limited page checks are read-only by default, so this is safe for testing:
+
+```bash
+python3 -m rentwatch run --once --max-pages 1 --skip-routes
+```
+
+Use `--allow-partial-write` only if you intentionally want a limited-page run to
+update the database. Run continuously (random 30–60 min between checks) with
+`python3 -m rentwatch run`.
+
+### Sanity guard
+
+On a full run, if RentWatch scrapes far fewer listings than it had active for a
+search (a sign of a markup change or a soft block), it treats the run as partial
+and **skips removed-listing detection** so a glitch can't cascade thousands of
+false "removed" events.
+
+## What it captures
+
+Straight from each Rightmove search result (no extra requests):
+
+- listing **photos** (gallery + thumbnail)
+- price, bedrooms, **bathrooms**, **floor area** (when present), property subtype
+- **available-from date**, **key features**
+- **freshness** — "new" / "reduced" — and **let-agreed** status
+- map coordinates, agent, summary
+- TfL public-transport and cycling time to each configured target
+- first/last seen timestamps and full price history
+
+EPC rating, deposit, and council-tax band require Rightmove's per-listing detail
+pages, which are now JavaScript-rendered and frequently show "Ask agent". The
+database columns and `Store.update_listing_details` hook are in place for a future
+clean source, but a fragile per-listing detail crawler is deliberately **not**
+shipped. The dashboard shows these fields when present and "—" otherwise.
+
+## Balanced score
+
+Each listing gets a 0–100 score ([rentwatch/scoring.py](rentwatch/scoring.py),
+mirrored in [web/src/lib/scoring.js](web/src/lib/scoring.js)) that penalises the
+**worse** of the two commutes (both people must get to work), commute imbalance,
+rent percentile within the live market, let-agreed status, and missing routes; and
+rewards floor area, garden/parking, and freshly-listed homes. The dashboard's
+"Commute priority" sliders re-weight the two targets and re-rank instantly.
+
+## Dashboard
+
+A React/Vite dashboard in `web/` reads the exported JSON. It has a dark
+command-center layout: a clustered commute map, a virtualized power-table, a photo
+**gallery** view, a live stats panel (commute-balance scatter, rent histogram,
+shortlist), a working **Compare** modal, a listing **detail** slide-over (photos,
+price-history sparkline, commute breakdown, "why this score"), saved searches, and
+shareable URL filter state.
 
 ```bash
 python3 -m rentwatch run --once --no-notify
@@ -163,149 +201,54 @@ npm install
 npm run dev
 ```
 
-For GitHub Pages, the workflow builds the app with `/UK_Renting/` as the base
-path and deploys `web/dist`.
+The exporter ships only **active + out-of-search** listings (slim, nulls dropped,
+totals in `meta.counts`) — far smaller than shipping every removed listing. The
+build-artifact copy `web/public/data/listings.json` is git-ignored; only
+`docs/data/listings.json` is committed, and the GitHub Pages workflow rebuilds the
+rest with `/UK_Renting/` as the base path.
 
-To avoid Rightmove's roughly 1,000-result pagination cap, use the split-price
-update script. It rewrites your local `config.json` into five price bands under
-one search name with a default 6-mile radius, runs the monitor once without
-Telegram notifications, exports the website JSON, commits the data, and pushes
-to GitHub:
+## Split-price search
+
+To avoid Rightmove's ~1,000-result pagination cap, the split-price script rewrites
+`config.json` into five price bands under one search name, runs the monitor once,
+exports the website JSON, commits `docs/data/listings.json`, and pushes:
 
 ```bash
 scripts/update_split_price_search.sh
 ```
 
-The default bands are `1000-1600`, `1601-1750`, `1751-1900`, `1901-2050`, and
-`2051-2200`. It keeps the search name as `Noemie work and Gerard work`.
-
-Override the radius or bands when needed:
+Default bands: `1000-1600`, `1601-1750`, `1751-1900`, `1901-2050`, `2051-2200`.
+Override them or the radius:
 
 ```bash
 SEARCH_RADIUS=6 PRICE_BANDS="1000:1600,1601:1750,1751:1900,1901:2050,2051:2200" scripts/update_split_price_search.sh
 ```
 
-After each successful full run, RentWatch stores a fingerprint of the active
-search definition. If URLs, price limits, or keywords change later, the next
-full run automatically uses search-changed mode: missing known listings are
-marked `out_of_search` instead of `removed`, and known reappearances are not
-sent as new listing alerts.
-
-To run the full update without Zoopla:
+`DRY_RUN=1` stops before scraping. To run live (send Telegram + publish after every
+pass on the configured polling delay):
 
 ```bash
-RUN_ZOOPLA=0 scripts/update_split_price_search.sh
+scripts/live_notify_and_publish.sh
 ```
 
-`RUN_ZOOPLA=0` is the default for this script, so Zoopla is skipped unless you
-explicitly opt in.
+After each successful full run, RentWatch stores a fingerprint of the active search
+definition. If URLs, price limits, or keywords change later, the next full run uses
+search-changed mode automatically: missing known listings become `out_of_search`
+instead of `removed`, and known reappearances are not sent as new-listing alerts.
 
-To run Rightmove plus Zoopla:
-
-```bash
-RUN_ZOOPLA=1 scripts/update_split_price_search.sh
-```
-
-To run only Zoopla:
-
-```bash
-RUN_ZOOPLA=only scripts/update_split_price_search.sh
-```
-
-If you already have listings in `rentwatch.sqlite3` and only need to fill new
-route targets, use the database-only route backfill. This avoids fetching
-Rightmove before calculating TfL routes:
+If you already have listings and only need to fill new route targets:
 
 ```bash
 python3 -m rentwatch routes
 python3 scripts/export_site_data.py
 ```
 
-Edit `config.json` to add Telegram credentials:
-
-```json
-{
-  "notifications": {
-    "telegram": {
-      "enabled": true,
-      "bot_token": "123456:abc",
-      "chat_id": "123456789",
-      "chat_ids": ["987654321"]
-    }
-  }
-}
-```
-
-`chat_id` is kept for one main recipient. Add extra recipients to `chat_ids`.
-The bot sends the same alert to every unique chat ID.
-
-## Run
-
-Prime the database first so the current listings are saved without sending a
-large initial batch of notifications:
-
-```bash
-python3 -m rentwatch run --once --prime
-```
-
-Then run a single check:
-
-```bash
-python3 -m rentwatch run --once
-```
-
-The CLI shows progress while scraping and calculating routes. Scraping displays
-page progress plus collected listings against the portal headline count. Route
-calculation displays listing progress while it works through the route targets.
-
-Limited page checks are read-only by default, so this is safe for testing:
-
-```bash
-python3 -m rentwatch run --once --max-pages 1 --skip-routes --skip-zoopla
-```
-
-Use `--allow-partial-write` only if you intentionally want a limited-page run to
-update the database.
-
-Run continuously:
-
-```bash
-python3 -m rentwatch run
-```
-
-By default it waits a random 30-60 minutes between checks.
-
-To run live notifications and publish the website after every pass:
-
-```bash
-scripts/live_notify_and_publish.sh
-```
-
-That script repeatedly runs the split-price search without `--prime`, sends
-Telegram notifications for new/changed listings, exports website data, commits
-changes when there are any, pushes to GitHub, then waits using the configured
-polling delay.
-
-## Useful Commands
+## Useful commands
 
 ```bash
 python3 -m rentwatch list
 python3 -m rentwatch export --output listings.csv
 python3 -m rentwatch test-telegram
 ```
-
-## What It Tracks
-
-- new listings
-- returned listings
-- removed listings, if enabled per search
-- out-of-search listings when search criteria changed
-- price changes
-- latitude and longitude, when the portal includes map coordinates
-- TfL public-transport time/distance to your configured target
-- TfL cycling time/distance to your configured target
-- source links for matching Rightmove/Zoopla listings shown as one home
-- first and last seen timestamps
-- price history
 
 The SQLite database defaults to `rentwatch.sqlite3`.

@@ -33,6 +33,20 @@ CREATE TABLE IF NOT EXISTS listings (
     agent TEXT,
     summary TEXT,
     title TEXT,
+    image_urls_json TEXT,
+    main_image TEXT,
+    bathrooms INTEGER,
+    property_subtype TEXT,
+    size_sqft INTEGER,
+    let_agreed INTEGER,
+    first_listed_date TEXT,
+    added_or_reduced TEXT,
+    update_reason TEXT,
+    available_date TEXT,
+    key_features_json TEXT,
+    epc_rating TEXT,
+    deposit_pcm INTEGER,
+    council_tax_band TEXT,
     first_seen_at TEXT NOT NULL,
     last_seen_at TEXT NOT NULL,
     last_changed_at TEXT NOT NULL,
@@ -303,6 +317,29 @@ class Store:
                 ),
             )
 
+    def update_listing_details(self, listing: Listing) -> None:
+        """Persist detail-page enrichment without disturbing scrape-owned fields."""
+        with self.connection:
+            self.connection.execute(
+                """
+                UPDATE listings
+                SET epc_rating = ?,
+                    deposit_pcm = ?,
+                    council_tax_band = ?,
+                    available_date = COALESCE(NULLIF(?, ''), available_date),
+                    size_sqft = COALESCE(?, size_sqft)
+                WHERE listing_key = ?
+                """,
+                (
+                    listing.epc_rating,
+                    listing.deposit_pcm,
+                    listing.council_tax_band,
+                    listing.available_date,
+                    listing.size_sqft,
+                    listing.listing_key,
+                ),
+            )
+
     def list_searches_summary(self) -> list[sqlite3.Row]:
         return list(
             self.connection.execute(
@@ -314,6 +351,13 @@ class Store:
                 """
             )
         )
+
+    def active_listing_count(self, search_name: str) -> int:
+        row = self.connection.execute(
+            "SELECT COUNT(*) AS n FROM search_listings WHERE search_name = ? AND status = 'active'",
+            (search_name,),
+        ).fetchone()
+        return int(row["n"]) if row else 0
 
     def get_search_fingerprint(self, search_name: str) -> str | None:
         row = self.connection.execute(
@@ -419,9 +463,14 @@ class Store:
                     transit_minutes, transit_distance_km, cycling_minutes,
                     cycling_distance_km, route_target_latitude,
                     route_target_longitude, route_targets_json, route_updated_at,
-                    canonical_key, title, first_seen_at, last_seen_at,
+                    canonical_key, title,
+                    image_urls_json, main_image, bathrooms, property_subtype,
+                    size_sqft, let_agreed, first_listed_date, added_or_reduced,
+                    update_reason, available_date, key_features_json,
+                    epc_rating, deposit_pcm, council_tax_band,
+                    first_seen_at, last_seen_at,
                     last_changed_at, raw_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     listing.listing_key,
@@ -446,6 +495,20 @@ class Store:
                     listing.route_updated_at,
                     listing.canonical_key,
                     listing.title,
+                    json.dumps(listing.image_urls or []),
+                    listing.main_image,
+                    listing.bathrooms,
+                    listing.property_subtype,
+                    listing.size_sqft,
+                    1 if listing.let_agreed else 0,
+                    listing.first_listed_date,
+                    listing.added_or_reduced,
+                    listing.update_reason,
+                    listing.available_date,
+                    json.dumps(listing.key_features or []),
+                    listing.epc_rating,
+                    listing.deposit_pcm,
+                    listing.council_tax_band,
                     now,
                     now,
                     now,
@@ -481,6 +544,17 @@ class Store:
                 route_updated_at = ?,
                 canonical_key = ?,
                 title = ?,
+                image_urls_json = ?,
+                main_image = ?,
+                bathrooms = ?,
+                property_subtype = ?,
+                size_sqft = ?,
+                let_agreed = ?,
+                first_listed_date = ?,
+                added_or_reduced = ?,
+                update_reason = ?,
+                available_date = ?,
+                key_features_json = ?,
                 last_seen_at = ?,
                 last_changed_at = ?,
                 raw_json = ?
@@ -506,6 +580,17 @@ class Store:
                 route_values["route_updated_at"],
                 listing.canonical_key,
                 listing.title,
+                json.dumps(listing.image_urls or []),
+                listing.main_image,
+                listing.bathrooms,
+                listing.property_subtype,
+                listing.size_sqft,
+                1 if listing.let_agreed else 0,
+                listing.first_listed_date,
+                listing.added_or_reduced,
+                listing.update_reason,
+                listing.available_date,
+                json.dumps(listing.key_features or []),
                 now,
                 changed_at,
                 raw_json,
@@ -557,6 +642,20 @@ class Store:
             ("route_targets_json", "TEXT"),
             ("route_updated_at", "TEXT"),
             ("canonical_key", "TEXT"),
+            ("image_urls_json", "TEXT"),
+            ("main_image", "TEXT"),
+            ("bathrooms", "INTEGER"),
+            ("property_subtype", "TEXT"),
+            ("size_sqft", "INTEGER"),
+            ("let_agreed", "INTEGER"),
+            ("first_listed_date", "TEXT"),
+            ("added_or_reduced", "TEXT"),
+            ("update_reason", "TEXT"),
+            ("available_date", "TEXT"),
+            ("key_features_json", "TEXT"),
+            ("epc_rating", "TEXT"),
+            ("deposit_pcm", "INTEGER"),
+            ("council_tax_band", "TEXT"),
         ]:
             if column not in existing:
                 self.connection.execute(
@@ -587,8 +686,29 @@ def listing_from_row(row: sqlite3.Row) -> Listing:
         agent=row["agent"] or "",
         summary=row["summary"] or "",
         title=row["title"] or "",
+        image_urls=json.loads(_row_get(row, "image_urls_json") or "[]"),
+        main_image=_row_get(row, "main_image") or "",
+        bathrooms=_row_get(row, "bathrooms"),
+        property_subtype=_row_get(row, "property_subtype") or "",
+        size_sqft=_row_get(row, "size_sqft"),
+        let_agreed=bool(_row_get(row, "let_agreed")),
+        first_listed_date=_row_get(row, "first_listed_date") or "",
+        added_or_reduced=_row_get(row, "added_or_reduced") or "",
+        update_reason=_row_get(row, "update_reason") or "",
+        available_date=_row_get(row, "available_date") or "",
+        key_features=json.loads(_row_get(row, "key_features_json") or "[]"),
+        epc_rating=_row_get(row, "epc_rating") or "",
+        deposit_pcm=_row_get(row, "deposit_pcm"),
+        council_tax_band=_row_get(row, "council_tax_band") or "",
         raw=json.loads(row["raw_json"] or "{}"),
     )
+
+
+def _row_get(row: sqlite3.Row, key: str, default: object = None) -> object:
+    """Read a column that may be absent from older/narrower row selections."""
+    if key in row.keys():
+        return row[key]
+    return default
 
 
 def route_values_for_update(

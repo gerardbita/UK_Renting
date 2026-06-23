@@ -12,3 +12,7 @@ build/
 *.egg-info/
 node_modules/
 web/dist/
+# Build-artifact copy of the dashboard data. The GitHub Pages workflow
+# regenerates it from docs/data/listings.json, and local export re-writes it,
+# so it does not belong in git (committing it doubled the payload).
+web/public/data/listings.json

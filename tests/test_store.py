@@ -1,7 +1,90 @@
 from pathlib import Path
 
-from rentwatch.db import Store
+from rentwatch.db import Store, listing_from_row
 from rentwatch.models import Listing
+
+
+def test_store_round_trips_rich_detail_fields(tmp_path: Path):
+    store = Store(tmp_path / "rentwatch.sqlite3")
+    try:
+        listing = Listing(
+            source="rightmove",
+            property_id="1",
+            url="https://example.test/1",
+            address="One Street",
+            price_text="£1,000 pcm",
+            price_pcm=1000,
+            image_urls=["https://img/1.jpg", "https://img/2.jpg"],
+            main_image="https://img/1.jpg",
+            bathrooms=2,
+            property_subtype="Apartment",
+            size_sqft=720,
+            let_agreed=True,
+            first_listed_date="2026-05-01T10:00:00Z",
+            added_or_reduced="Reduced on 10/05/2026",
+            update_reason="price_reduced",
+            available_date="2026-06-01",
+            key_features=["Balcony", "Lift"],
+        )
+        store.record_search_results("test", [listing])
+
+        row = store._listing_row("rightmove:1")
+        back = listing_from_row(row)
+        assert back.image_urls == ["https://img/1.jpg", "https://img/2.jpg"]
+        assert back.main_image == "https://img/1.jpg"
+        assert back.bathrooms == 2
+        assert back.property_subtype == "Apartment"
+        assert back.size_sqft == 720
+        assert back.let_agreed is True
+        assert back.available_date == "2026-06-01"
+        assert back.key_features == ["Balcony", "Lift"]
+        # raw image_urls survive for the dedupe engine.
+        assert row["raw_json"]
+    finally:
+        store.close()
+
+
+def test_detail_enrichment_does_not_disturb_scrape_fields(tmp_path: Path):
+    store = Store(tmp_path / "rentwatch.sqlite3")
+    try:
+        listing = Listing(
+            source="rightmove",
+            property_id="1",
+            url="https://example.test/1",
+            price_pcm=1000,
+            size_sqft=700,
+        )
+        store.record_search_results("test", [listing])
+
+        listing.epc_rating = "C"
+        listing.deposit_pcm = 1153
+        listing.council_tax_band = "D"
+        listing.size_sqft = None  # enrichment without a size must not wipe it
+        store.update_listing_details(listing)
+
+        back = listing_from_row(store._listing_row("rightmove:1"))
+        assert back.epc_rating == "C"
+        assert back.deposit_pcm == 1153
+        assert back.council_tax_band == "D"
+        assert back.size_sqft == 700
+    finally:
+        store.close()
+
+
+def test_active_listing_count(tmp_path: Path):
+    store = Store(tmp_path / "rentwatch.sqlite3")
+    try:
+        store.record_search_results(
+            "test",
+            [
+                Listing(source="rightmove", property_id="1", url="https://example.test/1"),
+                Listing(source="rightmove", property_id="2", url="https://example.test/2"),
+            ],
+        )
+        assert store.active_listing_count("test") == 2
+        assert store.active_listing_count("other") == 0
+    finally:
+        store.close()
 
 
 def test_store_detects_new_price_change_and_removed(tmp_path: Path):

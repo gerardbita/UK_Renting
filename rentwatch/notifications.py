@@ -50,19 +50,22 @@ class TelegramNotifier:
 def format_event_message(event: ListingEvent) -> str:
     listing = event.listing
     lines = [
-        f"{event.human_label()} - {event.search_name}",
+        f"{event_emoji(event)} {event.human_label()} - {event.search_name}",
         listing.title or listing.address or "Untitled listing",
     ]
 
-    if listing.price_text:
-        if event.event_type == "price_change" and event.previous_price_text:
-            lines.append(f"{event.previous_price_text} -> {listing.price_text}")
-        else:
-            lines.append(listing.price_text)
+    if event.event_type == "price_change":
+        lines.append(format_price_change(event))
+    elif listing.price_text:
+        lines.append(listing.price_text)
 
     details = []
     if listing.bedrooms is not None:
         details.append(f"{listing.bedrooms} bed")
+    if listing.bathrooms is not None:
+        details.append(f"{listing.bathrooms} bath")
+    if listing.size_sqft:
+        details.append(f"{listing.size_sqft} sq ft")
     if listing.agent:
         details.append(f"Agent: {listing.agent}")
     if details:
@@ -74,6 +77,102 @@ def format_event_message(event: ListingEvent) -> str:
         lines.append(listing.address)
     lines.append(listing.url)
     return "\n".join(lines)
+
+
+def event_emoji(event: ListingEvent) -> str:
+    if event.event_type == "price_change":
+        return price_delta(event)[2]
+    return {
+        "new": "🆕",
+        "reactivated": "🔁",
+        "removed": "❌",
+    }.get(event.event_type, "•")
+
+
+def price_delta(event: ListingEvent) -> tuple[int | None, float | None, str]:
+    """Return (absolute delta, percent delta, emoji) for a price change."""
+    new_price = event.listing.price_pcm
+    old_price = event.previous_price_pcm
+    if not new_price or not old_price:
+        return None, None, "💷"
+    delta = new_price - old_price
+    pct = (delta / old_price) * 100 if old_price else None
+    emoji = "📉" if delta < 0 else "📈" if delta > 0 else "💷"
+    return delta, pct, emoji
+
+
+def format_price_change(event: ListingEvent) -> str:
+    listing = event.listing
+    previous = event.previous_price_text or (
+        f"£{event.previous_price_pcm:,} pcm" if event.previous_price_pcm else "?"
+    )
+    current = listing.price_text or (
+        f"£{listing.price_pcm:,} pcm" if listing.price_pcm else "?"
+    )
+    delta, pct, emoji = price_delta(event)
+    if delta is None:
+        return f"{previous} -> {current}"
+    sign = "-" if delta < 0 else "+"
+    pct_text = f", {pct:+.1f}%" if pct is not None else ""
+    return f"{previous} -> {current} ({emoji} {sign}£{abs(delta):,}{pct_text})"
+
+
+def format_digest(events: list[ListingEvent]) -> str:
+    """One combined message summarising a poll's notifiable events."""
+    if not events:
+        return ""
+
+    buckets: dict[str, list[ListingEvent]] = {}
+    for event in events:
+        buckets.setdefault(event.event_type, []).append(event)
+
+    headline_parts = []
+    for event_type, label in (
+        ("new", "🆕 new"),
+        ("reactivated", "🔁 returned"),
+        ("price_change", "📉 price"),
+        ("removed", "❌ removed"),
+    ):
+        count = len(buckets.get(event_type, []))
+        if count:
+            headline_parts.append(f"{count} {label}")
+    search_names = sorted({event.search_name for event in events})
+    title = " · ".join(search_names) if len(search_names) == 1 else "RentWatch"
+    lines = [f"RentWatch update — {title}", " | ".join(headline_parts), ""]
+
+    shown = 0
+    for event in events:
+        if shown >= 15:
+            lines.append(f"...and {len(events) - shown} more")
+            break
+        listing = event.listing
+        bits = [f"{event_emoji(event)} {listing.title or listing.address or 'Listing'}"]
+        if event.event_type == "price_change":
+            delta, pct, _ = price_delta(event)
+            if delta is not None:
+                sign = "-" if delta < 0 else "+"
+                bits.append(f"{sign}£{abs(delta):,}")
+        elif listing.price_text:
+            bits.append(listing.price_text)
+        commute = best_commute_summary(listing)
+        if commute:
+            bits.append(commute)
+        lines.append(" — ".join(bits))
+        lines.append(listing.url)
+        shown += 1
+
+    return "\n".join(line for line in lines if line is not None)
+
+
+def best_commute_summary(listing: Listing) -> str:
+    targets = listing.route_targets or []
+    parts = []
+    for target in targets[:2]:
+        minutes = optional_int(target.get("transit_minutes"))
+        if minutes is not None:
+            name = str(target.get("name") or "T").split()[0]
+            parts.append(f"{name} {minutes}m")
+    return " / ".join(parts)
 
 
 def listing_matches_route_filters(

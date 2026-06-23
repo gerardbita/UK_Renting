@@ -27,6 +27,22 @@ class Listing:
     summary: str = ""
     title: str = ""
     canonical_key: str = ""
+    # Rich detail captured from the portal search payload (zero extra requests).
+    image_urls: list[str] = field(default_factory=list)
+    main_image: str = ""
+    bathrooms: int | None = None
+    property_subtype: str = ""
+    size_sqft: int | None = None
+    let_agreed: bool = False
+    first_listed_date: str = ""
+    added_or_reduced: str = ""
+    update_reason: str = ""
+    available_date: str = ""
+    key_features: list[str] = field(default_factory=list)
+    # Populated only by the optional detail-page enrichment pass.
+    epc_rating: str = ""
+    deposit_pcm: int | None = None
+    council_tax_band: str = ""
     raw: dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -43,6 +59,8 @@ class Listing:
                 self.agent,
                 self.summary,
                 self.title,
+                self.property_subtype,
+                " ".join(self.key_features),
             ]
             if part
         ).lower()
@@ -56,6 +74,11 @@ class Listing:
             "price_text": self.price_text,
             "price_pcm": self.price_pcm,
             "bedrooms": self.bedrooms,
+            "bathrooms": self.bathrooms,
+            "size_sqft": self.size_sqft,
+            "property_subtype": self.property_subtype,
+            "let_agreed": self.let_agreed,
+            "available_date": self.available_date,
             "latitude": self.latitude,
             "longitude": self.longitude,
             "agent": self.agent,

@@ -12,9 +12,10 @@
   "notifications": {
     "telegram": {
       "enabled": false,
-      "bot_token": "",
-      "chat_id": "",
+      "bot_token": "${TELEGRAM_BOT_TOKEN}",
+      "chat_id": "${TELEGRAM_CHAT_ID}",
       "chat_ids": [],
+      "digest": false,
       "route_filters": [
         {
           "target_name": "Noémie's work",
@@ -62,8 +63,7 @@
       "notify_price_changes": true,
       "notify_removed": false,
       "urls": [
-        "https://www.rightmove.co.uk/property-to-rent/find.html?minBedrooms=1&propertyTypes=detached%2Csemi-detached%2Cterraced%2Cflat%2Cbungalow&furnishTypes=unfurnished%2CpartFurnished&dontShow=houseShare%2Cretirement%2Cstudent&channel=RENT&index=0&retirement=false&houseFlatShare=false&letFurnishType=unfurnished&sortType=6&minPrice=1000&areaSizeUnit=sqft&maxPrice=2500&radius=10.0&locationIdentifier=POSTCODE%5E918640",
-        "https://www.zoopla.co.uk/to-rent/property/london/st-marys-terrace/w2-1sj/?beds_min=1&furnished_state=unfurnished&is_retirement_home=false&is_shared_accommodation=false&is_student_accommodation=false&price_frequency=per_month&price_max=2500&price_min=1000&property_sub_type=semi_detached&property_sub_type=flats&property_sub_type=detached&property_sub_type=terraced&property_sub_type=bungalow&q=W2%201SJ&radius=10&search_source=to-rent"
+        "https://www.rightmove.co.uk/property-to-rent/find.html?minBedrooms=1&propertyTypes=detached%2Csemi-detached%2Cterraced%2Cflat%2Cbungalow&furnishTypes=unfurnished%2CpartFurnished&dontShow=houseShare%2Cretirement%2Cstudent&channel=RENT&index=0&retirement=false&houseFlatShare=false&letFurnishType=unfurnished&sortType=6&minPrice=1000&areaSizeUnit=sqft&maxPrice=2500&radius=10.0&locationIdentifier=POSTCODE%5E918640"
       ]
     }
   ]

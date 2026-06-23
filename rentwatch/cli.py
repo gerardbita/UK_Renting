@@ -17,6 +17,7 @@ from .config import (
     DEFAULT_CONFIG_PATH,
     AppConfig,
     SearchConfig,
+    TelegramConfig,
     load_config,
     sample_config,
     save_config,
@@ -24,7 +25,11 @@ from .config import (
 from .db import Store, listing_from_row
 from .dedupe import assign_canonical_keys
 from .models import Listing, ListingEvent
-from .notifications import TelegramNotifier, format_event_message
+from .notifications import (
+    TelegramNotifier,
+    format_event_message,
+    listing_matches_route_filters,
+)
 from .progress import ProgressBar, compact_detail
 from .rightmove_location import LocationLookupError, lookup_rightmove_locations
 from .rightmove_url import RightmoveUrlOptions, build_rightmove_url
@@ -656,6 +661,8 @@ def run_once(
         existing_listings = store.iter_listing_models()
         assign_canonical_keys(scraped, existing_listings)
         preserve_existing_route_data(scraped, existing_listings)
+        for listing in scraped:
+            sync_listing_route_targets(listing, config)
 
         listings = apply_filters(search, scraped)
         if calculate_routes and record_results:
@@ -673,6 +680,11 @@ def run_once(
             print("Limited page run: read-only; skipped database writes.")
             print(f"{search.name}: {len(listings)} matching listings, 0 changes recorded.")
             continue
+        telegram_filter_config = (
+            config.notifications.telegram
+            if notify and notifier.enabled()
+            else None
+        )
         events = filter_notifiable_events(
             search,
             store.record_search_results(
@@ -682,6 +694,7 @@ def run_once(
                 missing_status="out_of_search" if effective_search_changed else "removed",
                 suppress_known_new_events=effective_search_changed,
             ),
+            telegram_config=telegram_filter_config,
         )
         if effective_search_changed:
             print("Search changed mode: missing listings marked out_of_search.")
@@ -1125,16 +1138,30 @@ def apply_filters(search: SearchConfig, listings: list[Listing]) -> list[Listing
 
 
 def filter_notifiable_events(
-    search: SearchConfig, events: list[ListingEvent]
+    search: SearchConfig,
+    events: list[ListingEvent],
+    *,
+    telegram_config: TelegramConfig | None = None,
 ) -> list[ListingEvent]:
     allowed: list[ListingEvent] = []
     for event in events:
-        if event.event_type in {"new", "reactivated"} and search.notify_new:
-            allowed.append(event)
-        elif event.event_type == "price_change" and search.notify_price_changes:
-            allowed.append(event)
-        elif event.event_type == "removed" and search.notify_removed:
-            allowed.append(event)
+        event_enabled = (
+            (event.event_type in {"new", "reactivated"} and search.notify_new)
+            or (event.event_type == "price_change" and search.notify_price_changes)
+            or (event.event_type == "removed" and search.notify_removed)
+        )
+        if not event_enabled:
+            continue
+        if (
+            telegram_config is not None
+            and telegram_config.route_filters
+            and not listing_matches_route_filters(
+                event.listing,
+                telegram_config.route_filters,
+            )
+        ):
+            continue
+        allowed.append(event)
     return allowed
 
 

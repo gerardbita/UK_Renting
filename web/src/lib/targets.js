@@ -1,11 +1,11 @@
 export const DEFAULT_TARGETS = [
   {
-    name: "Paddington target",
+    name: "Noémie's work",
     latitude: 51.5209823,
     longitude: -0.1770073,
   },
   {
-    name: "Second target",
+    name: "Gerard's work",
     latitude: 51.4928449,
     longitude: -0.2198001,
   },

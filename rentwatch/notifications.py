@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import requests
 
-from .config import TelegramConfig
+from .config import TelegramConfig, TelegramRouteFilterConfig
 from .models import Listing, ListingEvent
 
 
@@ -74,6 +74,96 @@ def format_event_message(event: ListingEvent) -> str:
         lines.append(listing.address)
     lines.append(listing.url)
     return "\n".join(lines)
+
+
+def listing_matches_route_filters(
+    listing: Listing,
+    route_filters: list[TelegramRouteFilterConfig],
+) -> bool:
+    if not route_filters:
+        return True
+    return any(
+        route_filter_matches_listing(listing, route_filter)
+        for route_filter in route_filters
+    )
+
+
+def route_filter_matches_listing(
+    listing: Listing,
+    route_filter: TelegramRouteFilterConfig,
+) -> bool:
+    route_target = find_matching_route_target(listing, route_filter)
+    if route_target is None:
+        return False
+
+    if route_filter.max_transit_minutes is not None:
+        transit_minutes = optional_int(route_target.get("transit_minutes"))
+        if transit_minutes is None or transit_minutes > route_filter.max_transit_minutes:
+            return False
+
+    if route_filter.max_cycling_minutes is not None:
+        cycling_minutes = optional_int(route_target.get("cycling_minutes"))
+        if cycling_minutes is None or cycling_minutes > route_filter.max_cycling_minutes:
+            return False
+
+    return True
+
+
+def find_matching_route_target(
+    listing: Listing,
+    route_filter: TelegramRouteFilterConfig,
+) -> dict[str, object] | None:
+    route_targets: list[dict[str, object]] = list(listing.route_targets)
+    if not route_targets and (
+        listing.transit_minutes is not None or listing.cycling_minutes is not None
+    ):
+        route_targets.append(
+            {
+                "name": "",
+                "latitude": listing.route_target_latitude,
+                "longitude": listing.route_target_longitude,
+                "transit_minutes": listing.transit_minutes,
+                "transit_distance_km": listing.transit_distance_km,
+                "cycling_minutes": listing.cycling_minutes,
+                "cycling_distance_km": listing.cycling_distance_km,
+            }
+        )
+
+    return next(
+        (
+            target
+            for target in route_targets
+            if route_target_matches_filter(target, route_filter)
+        ),
+        None,
+    )
+
+
+def route_target_matches_filter(
+    target: dict[str, object],
+    route_filter: TelegramRouteFilterConfig,
+) -> bool:
+    target_name = str(target.get("name") or "").strip().lower()
+    filter_name = route_filter.target_name.strip().lower()
+    name_matches = bool(filter_name and target_name == filter_name)
+
+    if (
+        route_filter.target_latitude is not None
+        and route_filter.target_longitude is not None
+    ):
+        try:
+            target_latitude = float(target.get("latitude"))
+            target_longitude = float(target.get("longitude"))
+        except (TypeError, ValueError):
+            return name_matches
+        return (
+            abs(target_latitude - route_filter.target_latitude) < 0.00001
+            and abs(target_longitude - route_filter.target_longitude) < 0.00001
+        )
+
+    if filter_name:
+        return name_matches
+    return True
 
 
 def format_route_lines(listing: Listing) -> list[str]:

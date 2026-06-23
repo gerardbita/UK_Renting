@@ -58,11 +58,47 @@ class HttpConfig:
 
 
 @dataclass(slots=True)
+class TelegramRouteFilterConfig:
+    target_name: str = ""
+    target_latitude: float | None = None
+    target_longitude: float | None = None
+    max_transit_minutes: int | None = None
+    max_cycling_minutes: int | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "TelegramRouteFilterConfig":
+        return cls(
+            target_name=str(data.get("target_name", "")),
+            target_latitude=_optional_float(data.get("target_latitude")),
+            target_longitude=_optional_float(data.get("target_longitude")),
+            max_transit_minutes=_optional_int(
+                data.get(
+                    "max_transit_minutes",
+                    data.get("max_public_transport_minutes"),
+                )
+            ),
+            max_cycling_minutes=_optional_int(
+                data.get("max_cycling_minutes", data.get("max_bike_minutes"))
+            ),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "target_name": self.target_name,
+            "target_latitude": self.target_latitude,
+            "target_longitude": self.target_longitude,
+            "max_transit_minutes": self.max_transit_minutes,
+            "max_cycling_minutes": self.max_cycling_minutes,
+        }
+
+
+@dataclass(slots=True)
 class TelegramConfig:
     enabled: bool = False
     bot_token: str = ""
     chat_id: str = ""
     chat_ids: list[str] = field(default_factory=list)
+    route_filters: list[TelegramRouteFilterConfig] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any] | None) -> "TelegramConfig":
@@ -72,11 +108,17 @@ class TelegramConfig:
             for item in data.get("chat_ids", [])
             if str(item).strip()
         ]
+        route_filters = [
+            TelegramRouteFilterConfig.from_dict(item)
+            for item in data.get("route_filters", [])
+            if isinstance(item, dict)
+        ]
         return cls(
             enabled=bool(data.get("enabled", False)),
             bot_token=str(data.get("bot_token", "")),
             chat_id=str(data.get("chat_id", "")),
             chat_ids=chat_ids,
+            route_filters=route_filters,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -85,6 +127,9 @@ class TelegramConfig:
             "bot_token": self.bot_token,
             "chat_id": self.chat_id,
             "chat_ids": self.chat_ids,
+            "route_filters": [
+                route_filter.to_dict() for route_filter in self.route_filters
+            ],
         }
 
     def recipient_chat_ids(self) -> list[str]:
@@ -336,16 +381,29 @@ def save_config(config: AppConfig, path: Path = DEFAULT_CONFIG_PATH) -> None:
 
 def sample_config() -> AppConfig:
     return AppConfig(
+        notifications=NotificationConfig(
+            telegram=TelegramConfig(
+                route_filters=[
+                    TelegramRouteFilterConfig(
+                        target_name="Noémie's work",
+                        target_latitude=51.5209823,
+                        target_longitude=-0.1770073,
+                        max_transit_minutes=35,
+                        max_cycling_minutes=25,
+                    )
+                ]
+            )
+        ),
         routing=RoutingConfig(
             enabled=True,
             targets=[
                 RouteTargetConfig(
-                    name="Paddington target",
+                    name="Noémie's work",
                     latitude=51.5209823,
                     longitude=-0.1770073,
                 ),
                 RouteTargetConfig(
-                    name="Hammersmith target",
+                    name="Gerard's work",
                     latitude=51.4928449,
                     longitude=-0.2198001,
                 ),

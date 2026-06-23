@@ -14,7 +14,16 @@
       "enabled": false,
       "bot_token": "",
       "chat_id": "",
-      "chat_ids": []
+      "chat_ids": [],
+      "route_filters": [
+        {
+          "target_name": "Noémie's work",
+          "target_latitude": 51.5209823,
+          "target_longitude": -0.1770073,
+          "max_transit_minutes": 35,
+          "max_cycling_minutes": 25
+        }
+      ]
     }
   },
   "routing": {
@@ -28,12 +37,12 @@
     "departure_time": "13:00",
     "targets": [
       {
-        "name": "Paddington target",
+        "name": "Noémie's work",
         "latitude": 51.5209823,
         "longitude": -0.1770073
       },
       {
-        "name": "Hammersmith target",
+        "name": "Gerard's work",
         "latitude": 51.4928449,
         "longitude": -0.2198001
       }

@@ -109,12 +109,12 @@ specific target. To calculate routes to more than one place, add `targets`:
     "departure_time": "08:00",
     "targets": [
       {
-        "name": "Paddington target",
+        "name": "Noémie's work",
         "latitude": 51.5209823,
         "longitude": -0.1770073
       },
       {
-        "name": "Hammersmith target",
+        "name": "Gerard's work",
         "latitude": 51.4928449,
         "longitude": -0.2198001
       }
@@ -126,6 +126,28 @@ specific target. To calculate routes to more than one place, add `targets`:
 `cache_hours: null` means routes are calculated once and reused. Use
 `python3 -m rentwatch run --once --no-notify --refresh-routes` if you
 intentionally want to recalculate them.
+
+Telegram alerts can also be limited by commute time. This only controls which
+events get sent to Telegram; the scraper still stores all matching listings and
+the dashboard still shows both configured targets:
+
+```json
+{
+  "notifications": {
+    "telegram": {
+      "route_filters": [
+        {
+          "target_name": "Noémie's work",
+          "target_latitude": 51.5209823,
+          "target_longitude": -0.1770073,
+          "max_transit_minutes": 35,
+          "max_cycling_minutes": 25
+        }
+      ]
+    }
+  }
+}
+```
 
 ## React dashboard
 
